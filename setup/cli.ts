@@ -273,6 +273,38 @@ async function runInit(): Promise<void> {
     chalk.dim("You'll be asked a few questions. Press Ctrl+C at any time to exit.\n")
   );
 
+  // Pre-flight checklist
+  console.log(chalk.yellow.bold('  Before you start, make sure you have:\n'));
+  console.log(chalk.dim('  ✓ A GitHub repo for your site (e.g. username/my-site)'));
+  console.log(
+    chalk.dim(
+      '  ✓ A GitHub Fine-grained PAT with Contents + Workflows read/write\n' +
+        '    → Create one at: github.com/settings/tokens'
+    )
+  );
+  console.log(
+    chalk.dim(
+      '  ✓ A Telegram bot token from @BotFather\n' +
+        '    → Message @BotFather on Telegram, send /newbot'
+    )
+  );
+  console.log(
+    chalk.dim(
+      '  ✓ Your Telegram User ID (send /start to @userinfobot to get it)'
+    )
+  );
+  console.log(
+    chalk.dim(
+      '  ✓ A Cloudflare account with Workers and Pages enabled\n' +
+        '    → dashboard.cloudflare.com → Workers & Pages'
+    )
+  );
+  console.log(
+    chalk.dim(
+      '  ✓ wrangler authenticated: run `npx wrangler login` if you haven\'t yet\n'
+    )
+  );
+
   // We collect all answers here before the execution phase.
   let answers!: InitAnswers;
 
@@ -319,7 +351,11 @@ async function runInit(): Promise<void> {
       {
         type: 'input',
         name: 'pagesProjectName',
-        message: 'Cloudflare Pages project name?',
+        message:
+          'Cloudflare Pages project name?\n' +
+          chalk.dim(
+            '  (Found at: dashboard.cloudflare.com → Workers & Pages → Pages)\n  '
+          ),
         default: (prev: { projectName: string }) => slugify(prev.projectName),
       },
     ]);
@@ -437,7 +473,11 @@ async function runInit(): Promise<void> {
         type: 'input',
         name: 'kvNamespaceIdRaw',
         message:
-          'Wrangler KV namespace ID (leave blank to create one now)?',
+          'Wrangler KV namespace ID (leave blank to auto-create)?\n' +
+          chalk.dim(
+            '  KV is a key-value store used to persist config and user roles.\n' +
+              '  To find an existing ID: dashboard.cloudflare.com → Workers & Pages → KV\n  '
+          ),
       },
     ]);
 
@@ -860,7 +900,7 @@ async function runInit(): Promise<void> {
     );
     console.log(
       chalk.bold(
-        '    -d "url=https://a3lix-worker.<YOUR_ACCOUNT>.workers.dev/telegram" \\'
+        '    -d "url=https://a3lix-worker.<YOUR_SUBDOMAIN>.workers.dev/telegram" \\'
       )
     );
     console.log(
@@ -869,8 +909,10 @@ async function runInit(): Promise<void> {
     console.log(
       '\n' +
         chalk.dim(
-          '  Replace <YOUR_ACCOUNT> with your Cloudflare account subdomain\n' +
-            '  (visible in your Workers dashboard URL).'
+          '  Replace <YOUR_SUBDOMAIN> with your Cloudflare workers.dev subdomain.\n' +
+            '  Find it at: dashboard.cloudflare.com → Workers & Pages → Overview\n' +
+            '  It appears in the URL of any deployed worker, e.g.\n' +
+            '  https://a3lix-worker.MY-ACCOUNT.workers.dev'
         )
     );
     console.log(
