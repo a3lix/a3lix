@@ -1,0 +1,34 @@
+{
+  "weekLabel": "This Week",
+  "tagline": "the board changes. the quality doesn't.",
+  "items": [
+    {
+      "day": "Monday & Tuesday",
+      "name": "Rahmsschnitzel",
+      "description": "Pork schnitzel in a velvety cream and paprika sauce, served with Spätzle.",
+      "price": "$27",
+      "active": true
+    },
+    {
+      "day": "Wednesday & Thursday",
+      "name": "Schnitzel Sandwich",
+      "description": "House schnitzel on a toasted kaiser with garlic aioli, pickles, and shredded cabbage.",
+      "price": "$18",
+      "active": true
+    },
+    {
+      "day": "Friday & Saturday",
+      "name": "Schnitzel Platter for Two",
+      "description": "Two schnitzels of your choice, four sides, a pretzel, and one bottle of Helles to share.",
+      "price": "$65",
+      "active": true
+    },
+    {
+      "day": "Sunday",
+      "name": "Sonntagsbraten",
+      "description": "Sunday roast — slow-braised pork belly with roasted root vegetables and dark beer gravy.",
+      "price": "$32",
+      "active": true
+    }
+  ]
+}

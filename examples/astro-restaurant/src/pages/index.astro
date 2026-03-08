@@ -1,0 +1,772 @@
+---
+// Schnitzel Fri3nds — A3lix example one-pager
+// All content is loaded from src/content/ — edit those files via Telegram using A3lix.
+
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { marked } from 'marked';
+
+const contentDir = join(process.cwd(), 'src/content');
+
+const hero    = JSON.parse(readFileSync(join(contentDir, 'hero.json'), 'utf-8'));
+const menu    = JSON.parse(readFileSync(join(contentDir, 'menu.json'), 'utf-8'));
+const specials = JSON.parse(readFileSync(join(contentDir, 'specials.json'), 'utf-8'));
+
+const aboutRaw  = readFileSync(join(contentDir, 'about.md'), 'utf-8');
+// Strip the H1 headline so we can use it separately
+const aboutTitle = aboutRaw.match(/^#\s+(.+)/m)?.[1] ?? 'Our Story';
+const aboutBody  = marked(aboutRaw.replace(/^#\s+.+\n?/m, '').trim());
+---
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Schnitzel Fri3nds — Toronto</title>
+  <meta name="description" content="A German-Canadian kitchen in the heart of the neighbourhood. Crispy, golden schnitzel served with pride." />
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet" />
+</head>
+
+<body>
+
+  <!-- ═══════════════════════════════════════════════
+       NAV
+  ══════════════════════════════════════════════════ -->
+  <nav class="nav">
+    <a href="#" class="nav-logo">Schnitzel Fri3nds</a>
+    <ul class="nav-links">
+      <li><a href="#menu">Menu</a></li>
+      <li><a href="#specials">Specials</a></li>
+      <li><a href="#about">About</a></li>
+      <li><a href="#visit" class="nav-cta">Visit Us</a></li>
+    </ul>
+  </nav>
+
+  <!-- ═══════════════════════════════════════════════
+       HERO
+  ══════════════════════════════════════════════════ -->
+  <section class="hero" id="home">
+    <div class="hero-grain"></div>
+
+    <!-- Vertical side labels (inspired by Angel Oak) -->
+    <span class="hero-side hero-side--left" aria-hidden="true">TORONTO · CANADA</span>
+    <span class="hero-side hero-side--right" aria-hidden="true">KÜCHE & GEMÜTLICHKEIT</span>
+
+    <div class="hero-content">
+      <p class="hero-badge">{hero.badge}</p>
+      <h1 class="hero-headline">{hero.headline}</h1>
+      <p class="hero-tagline">{hero.tagline}</p>
+      <p class="hero-sub">{hero.subtext}</p>
+      <a href={hero.ctaHref} class="hero-btn">{hero.ctaLabel}</a>
+    </div>
+
+    <!-- Decorative divider -->
+    <div class="hero-scroll-hint" aria-hidden="true">
+      <span>↓</span>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════
+       MENU
+  ══════════════════════════════════════════════════ -->
+  <section class="menu" id="menu">
+    <div class="section-header">
+      <span class="section-label">The Menu</span>
+      <h2 class="section-title">what we make</h2>
+    </div>
+
+    {menu.categories.map((category: { name: string; items: { name: string; description: string; price: string }[] }) => (
+      <div class="menu-category">
+        <h3 class="menu-category-name">{category.name}</h3>
+        <div class="menu-grid">
+          {category.items.map((item: { name: string; description: string; price: string }) => (
+            <div class="menu-item">
+              <div class="menu-item-top">
+                <span class="menu-item-name">{item.name}</span>
+                <span class="menu-item-price">{item.price}</span>
+              </div>
+              <p class="menu-item-desc">{item.description}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    ))}
+  </section>
+
+  <!-- ═══════════════════════════════════════════════
+       SPECIALS
+  ══════════════════════════════════════════════════ -->
+  <section class="specials" id="specials">
+    <div class="specials-inner">
+      <div class="section-header section-header--light">
+        <span class="section-label section-label--amber">{specials.weekLabel}</span>
+        <h2 class="section-title section-title--light">the board</h2>
+        <p class="specials-tagline">{specials.tagline}</p>
+      </div>
+
+      <div class="specials-list">
+        {specials.items.filter((s: { active: boolean }) => s.active).map((special: { day: string; name: string; description: string; price: string }) => (
+          <div class="special-item">
+            <div class="special-day">{special.day}</div>
+            <div class="special-body">
+              <div class="special-top">
+                <span class="special-name">{special.name}</span>
+                <span class="special-price">{special.price}</span>
+              </div>
+              <p class="special-desc">{special.description}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════
+       ABOUT
+  ══════════════════════════════════════════════════ -->
+  <section class="about" id="about">
+    <div class="about-inner">
+      <div class="about-visual" aria-hidden="true">
+        <!-- Decorative typographic block inspired by Florporto's editorial style -->
+        <div class="about-visual-block">
+          <span class="about-visual-de">Guten<br/>Appetit</span>
+          <span class="about-visual-en">bon<br/>appétit</span>
+        </div>
+      </div>
+      <div class="about-text">
+        <span class="section-label">Our Story</span>
+        <h2 class="section-title">{aboutTitle.toLowerCase()}</h2>
+        <div class="about-prose" set:html={aboutBody} />
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════
+       VISIT
+  ══════════════════════════════════════════════════ -->
+  <section class="visit" id="visit">
+    <div class="visit-inner">
+      <div class="visit-col">
+        <span class="section-label">Find Us</span>
+        <address class="visit-address">
+          123 Dundas Street West<br />
+          Toronto, ON · M5T 1G6
+        </address>
+      </div>
+      <div class="visit-col">
+        <span class="section-label">Hours</span>
+        <ul class="visit-hours">
+          <li><span>Mon – Thu</span><span>11:30 am – 10 pm</span></li>
+          <li><span>Fri – Sat</span><span>11:30 am – 11 pm</span></li>
+          <li><span>Sunday</span><span>12 pm – 9 pm</span></li>
+        </ul>
+      </div>
+      <div class="visit-col">
+        <span class="section-label">Contact</span>
+        <p class="visit-contact">
+          <a href="mailto:hello@schnitzel-fri3nds.ca">hello@schnitzel-fri3nds.ca</a><br />
+          <a href="tel:+14165550192">(416) 555-0192</a>
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════
+       FOOTER
+  ══════════════════════════════════════════════════ -->
+  <footer class="footer">
+    <span class="footer-logo">Schnitzel Fri3nds</span>
+    <span class="footer-copy">© 2024 Schnitzel Fri3nds Inc. Toronto, Canada</span>
+    <span class="footer-powered">
+      Powered by <a href="https://github.com/a3lix/a3lix" target="_blank" rel="noopener">A3lix</a>
+    </span>
+  </footer>
+
+</body>
+</html>
+
+<style is:global>
+  /* ─── Reset & Base ─────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    /* Palette */
+    --c-bg-dark:    #1A1917;
+    --c-bg-mid:     #242220;
+    --c-cream:      #F4EFE4;
+    --c-cream-dim:  #E8E1D3;
+    --c-amber:      #C8892C;
+    --c-amber-dim:  #9B6A20;
+    --c-text-dark:  #2A2720;
+    --c-text-muted: #7A6E60;
+    --c-border:     rgba(200,137,44,0.18);
+
+    /* Typography */
+    --f-serif: 'Playfair Display', Georgia, serif;
+    --f-sans:  'DM Sans', system-ui, sans-serif;
+
+    /* Spacing */
+    --gap: clamp(1.5rem, 4vw, 3rem);
+    --section-pad: clamp(4rem, 8vw, 7rem);
+    --max-w: 1180px;
+  }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    font-family: var(--f-sans);
+    background: var(--c-cream);
+    color: var(--c-text-dark);
+    font-size: 1rem;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ─── Nav ────────────────────────────────────── */
+  .nav {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1.25rem clamp(1.5rem, 5vw, 3rem);
+    background: rgba(26, 25, 23, 0.85);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-bottom: 1px solid rgba(200,137,44,0.1);
+  }
+
+  .nav-logo {
+    font-family: var(--f-serif);
+    font-size: 1.1rem;
+    color: var(--c-cream);
+    text-decoration: none;
+    letter-spacing: 0.01em;
+  }
+
+  .nav-links {
+    display: flex;
+    gap: 2rem;
+    list-style: none;
+  }
+
+  .nav-links a {
+    color: rgba(244,239,228,0.7);
+    text-decoration: none;
+    font-size: 0.875rem;
+    font-weight: 400;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    transition: color 0.2s;
+  }
+
+  .nav-links a:hover { color: var(--c-amber); }
+
+  .nav-cta {
+    color: var(--c-amber) !important;
+    border: 1px solid var(--c-amber);
+    padding: 0.4rem 1rem;
+    border-radius: 2px;
+    transition: background 0.2s !important;
+  }
+
+  .nav-cta:hover { background: var(--c-amber) !important; color: var(--c-bg-dark) !important; }
+
+  /* ─── Hero ───────────────────────────────────── */
+  .hero {
+    position: relative;
+    min-height: 100svh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background:
+      radial-gradient(ellipse 80% 60% at 30% 60%, rgba(180,110,20,0.22) 0%, transparent 60%),
+      radial-gradient(ellipse 60% 80% at 70% 30%, rgba(100,60,10,0.15) 0%, transparent 60%),
+      var(--c-bg-dark);
+    overflow: hidden;
+    padding: 8rem var(--gap) 4rem;
+  }
+
+  /* Film-grain texture overlay */
+  .hero-grain {
+    position: absolute;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+    background-size: 256px;
+    pointer-events: none;
+    opacity: 0.6;
+    mix-blend-mode: overlay;
+  }
+
+  /* Vertical side text */
+  .hero-side {
+    position: absolute;
+    font-size: 0.65rem;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: rgba(244,239,228,0.25);
+    writing-mode: vertical-rl;
+    font-family: var(--f-sans);
+    font-weight: 300;
+  }
+
+  .hero-side--left  { left: 1.75rem; bottom: 6rem; text-orientation: mixed; transform: rotate(180deg); }
+  .hero-side--right { right: 1.75rem; top: 8rem; }
+
+  .hero-content {
+    position: relative;
+    z-index: 2;
+    text-align: center;
+    max-width: 700px;
+  }
+
+  .hero-badge {
+    display: inline-block;
+    font-size: 0.7rem;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--c-amber);
+    border: 1px solid var(--c-border);
+    padding: 0.35rem 1rem;
+    border-radius: 2px;
+    margin-bottom: 1.75rem;
+    font-weight: 400;
+  }
+
+  .hero-headline {
+    font-family: var(--f-serif);
+    font-size: clamp(3rem, 8vw, 6.5rem);
+    font-weight: 700;
+    line-height: 1.0;
+    color: var(--c-cream);
+    letter-spacing: -0.01em;
+    margin-bottom: 1rem;
+  }
+
+  .hero-tagline {
+    font-family: var(--f-serif);
+    font-style: italic;
+    font-size: clamp(1rem, 2.5vw, 1.4rem);
+    color: var(--c-amber);
+    font-weight: 400;
+    letter-spacing: 0.04em;
+    margin-bottom: 1rem;
+  }
+
+  .hero-sub {
+    font-size: 1rem;
+    color: rgba(244,239,228,0.55);
+    font-weight: 300;
+    max-width: 440px;
+    margin: 0 auto 2.5rem;
+    line-height: 1.6;
+  }
+
+  .hero-btn {
+    display: inline-block;
+    padding: 0.85rem 2.5rem;
+    background: var(--c-amber);
+    color: var(--c-bg-dark);
+    text-decoration: none;
+    font-size: 0.8rem;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    border-radius: 2px;
+    transition: background 0.2s, transform 0.15s;
+  }
+
+  .hero-btn:hover { background: #E09A35; transform: translateY(-1px); }
+
+  .hero-scroll-hint {
+    position: absolute;
+    bottom: 2rem;
+    left: 50%;
+    transform: translateX(-50%);
+    color: rgba(244,239,228,0.3);
+    font-size: 1.1rem;
+    animation: bounce 2s infinite;
+  }
+
+  @keyframes bounce {
+    0%, 100% { transform: translateX(-50%) translateY(0); }
+    50% { transform: translateX(-50%) translateY(6px); }
+  }
+
+  /* ─── Section Shared ─────────────────────────── */
+  .section-label {
+    display: block;
+    font-size: 0.68rem;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--c-amber);
+    font-weight: 500;
+    margin-bottom: 0.6rem;
+  }
+
+  .section-label--amber { color: var(--c-amber); }
+
+  .section-title {
+    font-family: var(--f-serif);
+    font-size: clamp(2rem, 4.5vw, 3.5rem);
+    font-weight: 700;
+    line-height: 1.1;
+    letter-spacing: -0.01em;
+    color: var(--c-text-dark);
+    margin-bottom: 3rem;
+  }
+
+  .section-title--light { color: var(--c-cream); }
+
+  .section-header {
+    max-width: var(--max-w);
+    margin: 0 auto 1rem;
+    padding: 0 var(--gap);
+  }
+
+  .section-header--light .section-label { color: var(--c-amber); }
+
+  /* ─── Menu ───────────────────────────────────── */
+  .menu {
+    background: var(--c-cream);
+    padding: var(--section-pad) 0;
+  }
+
+  .menu-category {
+    max-width: var(--max-w);
+    margin: 0 auto 4rem;
+    padding: 0 var(--gap);
+  }
+
+  .menu-category-name {
+    font-family: var(--f-sans);
+    font-size: 0.7rem;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--c-text-muted);
+    font-weight: 500;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid var(--c-cream-dim);
+    margin-bottom: 1.5rem;
+  }
+
+  .menu-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 460px), 1fr));
+    gap: 1px;
+    background: var(--c-cream-dim);
+    border: 1px solid var(--c-cream-dim);
+  }
+
+  .menu-item {
+    background: var(--c-cream);
+    padding: 1.5rem 1.75rem;
+    transition: background 0.18s;
+  }
+
+  .menu-item:hover { background: #EDE8DC; }
+
+  .menu-item-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 1rem;
+    margin-bottom: 0.45rem;
+  }
+
+  .menu-item-name {
+    font-family: var(--f-serif);
+    font-size: 1.1rem;
+    font-weight: 400;
+    color: var(--c-text-dark);
+  }
+
+  .menu-item-price {
+    font-size: 0.95rem;
+    font-weight: 500;
+    color: var(--c-amber-dim);
+    white-space: nowrap;
+  }
+
+  .menu-item-desc {
+    font-size: 0.875rem;
+    color: var(--c-text-muted);
+    line-height: 1.55;
+  }
+
+  /* ─── Specials ───────────────────────────────── */
+  .specials {
+    background: var(--c-bg-dark);
+    padding: var(--section-pad) 0;
+  }
+
+  .specials-inner {
+    max-width: var(--max-w);
+    margin: 0 auto;
+    padding: 0 var(--gap);
+  }
+
+  .specials-tagline {
+    font-family: var(--f-serif);
+    font-style: italic;
+    font-size: 1rem;
+    color: rgba(244,239,228,0.4);
+    margin-top: -2rem;
+    margin-bottom: 3rem;
+  }
+
+  .specials-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    border-top: 1px solid rgba(200,137,44,0.2);
+  }
+
+  .special-item {
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    gap: 2rem;
+    padding: 1.75rem 0;
+    border-bottom: 1px solid rgba(200,137,44,0.12);
+    transition: background 0.15s;
+  }
+
+  .special-item:hover { background: rgba(200,137,44,0.04); padding-left: 0.5rem; }
+
+  .special-day {
+    font-size: 0.72rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--c-amber);
+    font-weight: 400;
+    padding-top: 0.2rem;
+  }
+
+  .special-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 1rem;
+    margin-bottom: 0.4rem;
+  }
+
+  .special-name {
+    font-family: var(--f-serif);
+    font-size: 1.2rem;
+    color: var(--c-cream);
+    font-weight: 400;
+  }
+
+  .special-price {
+    font-size: 0.95rem;
+    color: var(--c-amber);
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
+  .special-desc {
+    font-size: 0.875rem;
+    color: rgba(244,239,228,0.45);
+    line-height: 1.55;
+  }
+
+  /* ─── About ──────────────────────────────────── */
+  .about {
+    background: var(--c-cream);
+    padding: var(--section-pad) 0;
+    overflow: hidden;
+  }
+
+  .about-inner {
+    max-width: var(--max-w);
+    margin: 0 auto;
+    padding: 0 var(--gap);
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: clamp(3rem, 8vw, 7rem);
+    align-items: center;
+  }
+
+  /* Editorial typographic block — inspired by Florporto's visual language */
+  .about-visual {
+    position: relative;
+    height: clamp(320px, 45vw, 520px);
+    background:
+      radial-gradient(ellipse 70% 60% at 40% 50%, rgba(180,110,20,0.18) 0%, transparent 70%),
+      var(--c-bg-mid);
+    border-radius: 2px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+
+  .about-visual-block {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    text-align: center;
+  }
+
+  .about-visual-de {
+    font-family: var(--f-serif);
+    font-size: clamp(2.5rem, 5vw, 4rem);
+    font-weight: 700;
+    line-height: 1.0;
+    color: var(--c-cream);
+    letter-spacing: -0.02em;
+  }
+
+  .about-visual-en {
+    font-family: var(--f-serif);
+    font-style: italic;
+    font-size: clamp(1.2rem, 2.5vw, 1.8rem);
+    color: var(--c-amber);
+    line-height: 1.2;
+    opacity: 0.75;
+  }
+
+  .about-text .section-title {
+    margin-bottom: 1.5rem;
+  }
+
+  .about-prose {
+    font-size: 1rem;
+    line-height: 1.75;
+    color: var(--c-text-muted);
+  }
+
+  .about-prose p { margin-bottom: 1.1rem; }
+  .about-prose p:last-child { margin-bottom: 0; }
+  .about-prose strong { color: var(--c-text-dark); font-weight: 500; }
+
+  /* ─── Visit ──────────────────────────────────── */
+  .visit {
+    background: var(--c-bg-dark);
+    padding: var(--section-pad) 0;
+    border-top: 1px solid rgba(200,137,44,0.12);
+  }
+
+  .visit-inner {
+    max-width: var(--max-w);
+    margin: 0 auto;
+    padding: 0 var(--gap);
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: clamp(2rem, 5vw, 4rem);
+  }
+
+  .visit-col .section-label { margin-bottom: 1rem; }
+
+  .visit-address {
+    font-style: normal;
+    font-size: 1rem;
+    line-height: 1.7;
+    color: rgba(244,239,228,0.6);
+  }
+
+  .visit-hours {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .visit-hours li {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    font-size: 0.875rem;
+    color: rgba(244,239,228,0.55);
+    border-bottom: 1px solid rgba(200,137,44,0.08);
+    padding-bottom: 0.5rem;
+  }
+
+  .visit-hours li span:first-child { color: rgba(244,239,228,0.35); }
+
+  .visit-contact {
+    font-size: 0.95rem;
+    line-height: 1.9;
+  }
+
+  .visit-contact a {
+    color: rgba(244,239,228,0.55);
+    text-decoration: none;
+    transition: color 0.2s;
+  }
+
+  .visit-contact a:hover { color: var(--c-amber); }
+
+  /* ─── Footer ─────────────────────────────────── */
+  .footer {
+    background: #111009;
+    padding: 1.5rem clamp(1.5rem, 5vw, 3rem);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+    border-top: 1px solid rgba(200,137,44,0.08);
+  }
+
+  .footer-logo {
+    font-family: var(--f-serif);
+    font-size: 0.95rem;
+    color: rgba(244,239,228,0.35);
+  }
+
+  .footer-copy {
+    font-size: 0.75rem;
+    color: rgba(244,239,228,0.2);
+    letter-spacing: 0.04em;
+  }
+
+  .footer-powered {
+    font-size: 0.75rem;
+    color: rgba(244,239,228,0.2);
+  }
+
+  .footer-powered a {
+    color: var(--c-amber-dim);
+    text-decoration: none;
+  }
+
+  .footer-powered a:hover { color: var(--c-amber); }
+
+  /* ─── Responsive ─────────────────────────────── */
+  @media (max-width: 768px) {
+    .nav-links { display: none; }
+
+    .hero-side { display: none; }
+
+    .about-inner {
+      grid-template-columns: 1fr;
+    }
+
+    .about-visual { height: 260px; order: -1; }
+
+    .visit-inner {
+      grid-template-columns: 1fr;
+      gap: 2.5rem;
+    }
+
+    .special-item {
+      grid-template-columns: 1fr;
+      gap: 0.4rem;
+    }
+
+    .footer {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.5rem;
+    }
+  }
+</style>

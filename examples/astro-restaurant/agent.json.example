@@ -1,0 +1,33 @@
+{
+  "project": {
+    "name": "Schnitzel Fri3nds",
+    "repo": "YOUR_GITHUB_USERNAME/schnitzel-fri3nds",
+    "branch": "main",
+    "framework": "astro"
+  },
+  "bot": {
+    "platform": "telegram",
+    "ownerChatId": "YOUR_TELEGRAM_CHAT_ID"
+  },
+  "ai": {
+    "provider": "workers-ai",
+    "model": "@cf/meta/llama-3.3-70b-instruct-fp8"
+  },
+  "paths": {
+    "allowed": [
+      "src/content"
+    ]
+  },
+  "roles": {
+    "editors": [],
+    "viewers": []
+  },
+  "limits": {
+    "changesPerUserPerDay": 10,
+    "previewExpiryHours": 48,
+    "requireApprovalForAll": true
+  },
+  "cloudflare": {
+    "pagesProjectName": "schnitzel-fri3nds"
+  }
+}

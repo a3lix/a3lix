@@ -1,0 +1,79 @@
+{
+  "categories": [
+    {
+      "name": "Schnitzels",
+      "items": [
+        {
+          "name": "Wiener Schnitzel",
+          "description": "Classic veal, breadcrumbed and pan-fried golden. Served with lemon wedge and parsley potatoes.",
+          "price": "$28"
+        },
+        {
+          "name": "Jägerschnitzel",
+          "description": "Pork schnitzel with a rich wild mushroom and cream sauce. Hunter-style, just like Oma made it.",
+          "price": "$26"
+        },
+        {
+          "name": "Maple Schnitzel",
+          "description": "Our Canadian twist — chicken schnitzel glazed with Ontario maple syrup, served with pickled cabbage slaw.",
+          "price": "$24"
+        },
+        {
+          "name": "Käseschnitzel",
+          "description": "Pork schnitzel topped with melted Emmental cheese and a light white wine sauce.",
+          "price": "$25"
+        }
+      ]
+    },
+    {
+      "name": "Sides",
+      "items": [
+        {
+          "name": "Kartoffelsalat",
+          "description": "Warm German potato salad with bacon, mustard vinaigrette, and fresh chives.",
+          "price": "$8"
+        },
+        {
+          "name": "Rotkohl",
+          "description": "Braised red cabbage with apple and caraway. Sweet, tangy, and slow-cooked.",
+          "price": "$7"
+        },
+        {
+          "name": "Pretzel Bun & Butter",
+          "description": "House-baked pretzel bun with lightly salted cultured butter.",
+          "price": "$6"
+        },
+        {
+          "name": "Fries mit Curry",
+          "description": "Hand-cut fries served with our house currywurst sauce. Berlin street food, Toronto portion.",
+          "price": "$9"
+        }
+      ]
+    },
+    {
+      "name": "Drinks",
+      "items": [
+        {
+          "name": "Helles Lager",
+          "description": "Crisp Bavarian-style lager brewed locally in collaboration with Bellwoods Brewery.",
+          "price": "$9"
+        },
+        {
+          "name": "Riesling",
+          "description": "Off-dry Mosel Riesling — floral, bright, and the perfect companion to a schnitzel.",
+          "price": "$12"
+        },
+        {
+          "name": "Hugo Spritz",
+          "description": "Elderflower prosecco with fresh mint and a splash of soda. Light and refreshing.",
+          "price": "$13"
+        },
+        {
+          "name": "Apfelschorle",
+          "description": "Classic German sparkling apple juice. Crisp, clean, and non-alcoholic.",
+          "price": "$5"
+        }
+      ]
+    }
+  ]
+}
