@@ -1,0 +1,48 @@
+{
+  "name": "a3lix",
+  "version": "0.1.0",
+  "description": "The weird little agent that texts your clients back with a preview link.",
+  "bin": {
+    "a3lix": "./setup/cli.js"
+  },
+  "main": "./setup/cli.js",
+  "files": [
+    "setup/",
+    "worker/",
+    "deployers/",
+    "agent.json.example",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "wrangler dev worker/src/index.ts",
+    "deploy": "wrangler deploy",
+    "lint": "eslint . --ext .ts"
+  },
+  "keywords": ["cloudflare", "workers", "telegram", "ai", "agent", "cms", "nextjs", "astro"],
+  "author": "Felix (A3lix contributors)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/a3lix/a3lix.git"
+  },
+  "dependencies": {
+    "commander": "^12.0.0",
+    "inquirer": "^9.2.0",
+    "chalk": "^5.3.0",
+    "ora": "^8.0.0",
+    "node-fetch": "^3.3.2"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "@cloudflare/workers-types": "^4.20240529.0",
+    "wrangler": "^3.57.0",
+    "@types/node": "^20.12.0",
+    "@types/inquirer": "^9.0.7",
+    "eslint": "^8.57.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

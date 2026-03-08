@@ -1,0 +1,26 @@
+name = "a3lix-worker"
+main = "src/index.ts"
+compatibility_date = "2024-05-29"
+compatibility_flags = ["nodejs_compat"]
+
+[ai]
+binding = "AI"
+
+[[kv_namespaces]]
+binding = "A3LIX_KV"
+id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+preview_id = "REPLACE_WITH_YOUR_KV_PREVIEW_ID"
+
+[[r2_buckets]]
+binding = "A3LIX_R2"
+bucket_name = "a3lix-images"
+
+[vars]
+ENVIRONMENT = "production"
+LOG_LEVEL = "info"
+
+# Secrets (set via `wrangler secret put`):
+# GITHUB_TOKEN          - Fine-grained GitHub PAT (repo contents + workflows)
+# TELEGRAM_BOT_TOKEN    - From @BotFather
+# TELEGRAM_SECRET_TOKEN - Random string to verify webhook requests
+# AI_API_KEY            - Only needed if using non-Workers-AI provider

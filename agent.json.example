@@ -1,0 +1,53 @@
+{
+  "_comment": "Copy this file to agent.json and fill in your values. Never commit agent.json to git.",
+
+  "project": {
+    "_comment": "Your project's display name — shown in bot replies",
+    "name": "My Awesome Site",
+    "repo": "github-username/repo-name",
+    "branch": "main",
+    "framework": "astro"
+  },
+
+  "bot": {
+    "_comment": "Telegram bot settings",
+    "platform": "telegram",
+    "ownerChatId": "YOUR_TELEGRAM_CHAT_ID"
+  },
+
+  "ai": {
+    "_comment": "AI provider config. provider can be: workers-ai | openai | claude | grok | groq | gemini | openrouter",
+    "provider": "workers-ai",
+    "model": "@cf/meta/llama-3.3-70b-instruct-fp8",
+    "apiKey": ""
+  },
+
+  "paths": {
+    "_comment": "Allowed paths the agent can modify. DO NOT add paths outside these defaults unless you understand the security implications.",
+    "allowed": [
+      "src/content",
+      "src/components",
+      "src/pages",
+      "public",
+      "tailwind.config.*"
+    ]
+  },
+
+  "roles": {
+    "_comment": "User roles. ownerChatId is set above. Add editor/viewer Telegram IDs here.",
+    "editors": [],
+    "viewers": []
+  },
+
+  "limits": {
+    "_comment": "Rate limiting and safety settings",
+    "changesPerUserPerDay": 5,
+    "previewExpiryHours": 24,
+    "requireApprovalForAll": true
+  },
+
+  "cloudflare": {
+    "_comment": "Cloudflare Pages project name (from your Pages dashboard)",
+    "pagesProjectName": "my-awesome-site"
+  }
+}
