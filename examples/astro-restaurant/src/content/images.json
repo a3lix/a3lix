@@ -1,0 +1,24 @@
+{
+  "hero": {
+    "src": "/images/hero.jpg",
+    "alt": "Golden schnitzel frying in a pan"
+  },
+  "about": {
+    "src": "/images/about.jpg",
+    "alt": "Restaurant kitchen — plating food"
+  },
+  "gallery": [
+    {
+      "src": "/images/gallery-1.jpg",
+      "alt": "Crispy breaded schnitzel on a plate"
+    },
+    {
+      "src": "/images/gallery-2.jpg",
+      "alt": "Cold lager beer with condensation"
+    },
+    {
+      "src": "/images/gallery-3.jpg",
+      "alt": "Warm restaurant interior at night"
+    }
+  ]
+}
