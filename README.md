@@ -56,9 +56,30 @@ Before running `npx a3lix@latest init`, make sure you have:
 - **Cloudflare account** — free tier is fine; Workers AI and KV must be enabled
 - **GitHub repo** — a public or private repo running **Next.js** or **Astro** (other frameworks coming in v1.2)
 - **Telegram bot token** — create a bot via [@BotFather](https://t.me/botfather) and copy the token
-- **Cloudflare Pages project** — connect your GitHub repo to a new Pages project in the Cloudflare dashboard and enable preview deployments for all branches
+- **Cloudflare Pages project** — see [Connect GitHub to Cloudflare Pages](#connect-github-to-cloudflare-pages) below
 - **Workers AI enabled** — go to **Workers & Pages → Workers AI** in your Cloudflare dashboard and click Enable (free tier included)
 - **Node.js ≥ 18** installed locally (only needed to run the setup CLI)
+
+---
+
+## Connect GitHub to Cloudflare Pages
+
+A3lix relies on Cloudflare Pages automatically building a **preview deployment** for every branch the agent creates. Here's how to set that up:
+
+1. **Go to the Cloudflare dashboard** → [dash.cloudflare.com](https://dash.cloudflare.com) → **Workers & Pages**
+2. Click **Create application** → **Pages** → **Connect to Git**
+3. **Authorize Cloudflare** to access your GitHub account (one-time OAuth)
+4. Select your **repository** (e.g. `a3lix/my-site`) and click **Begin setup**
+5. **Configure your build settings:**
+   - **Framework preset:** select `Astro` or `Next.js` (matching your project)
+   - **Build command:** e.g. `npm run build` (auto-filled for most presets)
+   - **Build output directory:** e.g. `dist` for Astro, `.next` for Next.js
+6. Click **Save and Deploy** — Cloudflare will build and deploy your `main` branch
+7. **Note the project name** shown at the top of the Pages project page (e.g. `my-site`) — you will need this when running `npx a3lix@latest init`
+
+> ✅ **Preview deployments are on by default.** Every branch push will automatically generate a preview URL like `https://preview-fix-hero-1234.my-site.pages.dev`. No extra configuration is needed.
+
+> 💡 **Tip:** If you want to verify it's working, push any branch to your repo and watch the Pages dashboard — a preview build should appear within ~30 seconds.
 
 ---
 
