@@ -13,7 +13,19 @@
 
 ## What it does
 
-A3lix is an open-source AI agent that lets non-technical clients update their Next.js or Astro website by simply sending a text message on Telegram. The agent interprets the request using an AI model, makes the changes on a preview branch in GitHub, then sends the client a live preview link — no CMS dashboards, no logins, no support calls. Once the site owner approves, the change merges to `main` and goes live.
+**A3lix** is an open-source **AI Agent CMS** for any Jamstack/static site. Learn more at [a3lix.com](https://a3lix.com).
+
+Your clients simply text the agent on Telegram (or email):
+
+> "Add a new blog post about our schnitzel menu"
+> "Redesign the footer and change the brand color to orange"
+> "Create a new /menu page with photos"
+
+A3lix understands the request, edits the actual code on a preview branch in GitHub, spins up a live preview link, and waits for the site owner's approval before going live.
+
+Works with **Next.js, Astro, SvelteKit, Hugo, Eleventy, Remix, Gatsby, Nuxt** — basically any static/Jamstack site that lives in GitHub and uses branch previews.
+
+No CMS dashboard. No logins. No more "Felix fix this real quick" messages ever again.
 
 ---
 
