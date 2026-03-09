@@ -108,8 +108,6 @@ export interface Env {
   AI: Ai;
   /** KV namespace for rate limits, roles, OTPs, approvals, and audit logs. */
   A3LIX_KV: KVNamespace;
-  /** R2 bucket for future asset storage (unused in v0.1). */
-  A3LIX_R2: R2Bucket;
 
   // ── Secrets (set via `wrangler secret put`) ──────────────────────────────
   /** Fine-grained GitHub Personal Access Token with repo read/write access. */
