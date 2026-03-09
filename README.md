@@ -46,7 +46,7 @@ No CMS dashboard. No logins. No more "Felix fix this real quick" messages ever a
 ## Quick Start
 
 ```bash
-npx a3lix@latest init
+npx a3lixcms@latest init
 ```
 
 This interactive CLI will walk you through the entire setup in under 5 minutes:
@@ -57,13 +57,13 @@ This interactive CLI will walk you through the entire setup in under 5 minutes:
 4. **Register the Telegram webhook** — the CLI does this automatically
 5. **Text your bot** to confirm it's alive: _"Hey, what site is this?"_
 
-> 💡 **Tip:** Run `npx a3lix@latest update` at any time to pull the latest worker code without touching your `agent.json` or secrets.
+> 💡 **Tip:** Run `npx a3lixcms@latest update` at any time to pull the latest worker code without touching your `agent.json` or secrets.
 
 ---
 
 ## Prerequisites
 
-Before running `npx a3lix@latest init`, make sure you have:
+Before running `npx a3lixcms@latest init`, make sure you have:
 
 - **Cloudflare account** — free tier is fine; Workers AI and KV must be enabled
 - **GitHub repo** — a public or private repo running **Next.js** or **Astro** (other frameworks coming in v1.2)
@@ -87,7 +87,7 @@ A3lix relies on Cloudflare Pages automatically building a **preview deployment**
    - **Build command:** e.g. `npm run build` (auto-filled for most presets)
    - **Build output directory:** e.g. `dist` for Astro, `.next` for Next.js
 6. Click **Save and Deploy** — Cloudflare will build and deploy your `main` branch
-7. **Note the project name** shown at the top of the Pages project page (e.g. `my-site`) — you will need this when running `npx a3lix@latest init`
+7. **Note the project name** shown at the top of the Pages project page (e.g. `my-site`) — you will need this when running `npx a3lixcms@latest init`
 
 > ✅ **Preview deployments are on by default.** Every branch push will automatically generate a preview URL like `https://preview-fix-hero-1234.my-site.pages.dev`. No extra configuration is needed.
 
@@ -97,7 +97,7 @@ A3lix relies on Cloudflare Pages automatically building a **preview deployment**
 
 ## Configuration
 
-After running `npx a3lix@latest init`, an `agent.json` file will be created in your project root. **Never commit this file** — it is already in `.gitignore`.
+After running `npx a3lixcms@latest init`, an `agent.json` file will be created in your project root. **Never commit this file** — it is already in `.gitignore`.
 
 | Field | Type | Description |
 |-------|------|-------------|
