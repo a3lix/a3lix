@@ -581,17 +581,26 @@ export async function classifyIntent(
       aiConfig,
       aiBinding,
     );
-  } catch {
+  } catch (err) {
+    console.error('[a3lix] classifyIntent: callAi threw', err);
+    return { ...FALLBACK_INTENT };
+  }
+
+  if (!rawResponse || rawResponse.trim() === '') {
+    console.error('[a3lix] classifyIntent: AI returned empty response');
     return { ...FALLBACK_INTENT };
   }
 
   try {
-    const parsed: unknown = JSON.parse(stripFences(rawResponse));
+    const sanitised = stripFences(rawResponse);
+    const parsed: unknown = JSON.parse(sanitised);
     if (isParsedIntent(parsed)) {
       return parsed;
     }
+    console.error('[a3lix] classifyIntent: parsed JSON did not match ParsedIntent schema:', sanitised.slice(0, 300));
     return { ...FALLBACK_INTENT };
-  } catch {
+  } catch (err) {
+    console.error('[a3lix] classifyIntent: JSON.parse failed. Raw response (first 300 chars):', rawResponse.slice(0, 300));
     return { ...FALLBACK_INTENT };
   }
 }
