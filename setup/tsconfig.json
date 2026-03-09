@@ -8,7 +8,7 @@
     "strict": true,
     "noUncheckedIndexedAccess": false,
     "exactOptionalPropertyTypes": false,
-    "outDir": "../dist/setup",
+    "outDir": ".",
     "rootDir": ".",
     "skipLibCheck": true,
     "resolveJsonModule": true,
@@ -16,5 +16,5 @@
     "declarationMap": true,
     "sourceMap": true
   },
-  "include": ["./**/*.ts"]
+  "files": ["cli.ts"]
 }

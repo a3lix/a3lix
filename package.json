@@ -16,6 +16,8 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "build:setup": "tsc -p setup/tsconfig.json",
+    "prepublishOnly": "npm run build:setup",
     "dev": "wrangler dev worker/src/index.ts",
     "deploy": "wrangler deploy",
     "lint": "eslint . --ext .ts"
