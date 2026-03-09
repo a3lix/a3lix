@@ -235,6 +235,47 @@ Critical rules:
 }
 
 // ---------------------------------------------------------------------------
+// Response sanitiser
+// ---------------------------------------------------------------------------
+
+/**
+ * Strips markdown code fences and extracts the first JSON object or array
+ * from a raw AI response string.
+ *
+ * Workers AI (and some other models) often wrap JSON in triple-backtick code
+ * fences even when the prompt says not to. This function handles both forms:
+ *   ```json\n{...}\n```   →  {...}
+ *   ```\n[...]\n```        →  [...]
+ *   raw {...}              →  {...}  (unchanged)
+ *
+ * @param raw - The raw string returned by the AI provider.
+ * @returns The sanitised string, ready to pass to `JSON.parse()`.
+ * @internal
+ */
+function stripFences(raw: string): string {
+  let cleaned = raw.trim();
+
+  // Strip ```json ... ``` or ``` ... ``` fences.
+  const fenceMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenceMatch?.[1] !== undefined) {
+    cleaned = fenceMatch[1].trim();
+  }
+
+  // Extract the first JSON object {...} or array [...] — handles leading prose.
+  const objectMatch = cleaned.match(/\{[\s\S]*\}/);
+  const arrayMatch  = cleaned.match(/\[[\s\S]*\]/);
+
+  if (objectMatch && !arrayMatch) return objectMatch[0];
+  if (arrayMatch  && !objectMatch) return arrayMatch[0];
+  if (objectMatch && arrayMatch) {
+    // Return whichever starts earlier in the string.
+    return objectMatch.index! <= arrayMatch.index! ? objectMatch[0] : arrayMatch[0];
+  }
+
+  return cleaned;
+}
+
+// ---------------------------------------------------------------------------
 // Safe fallback values
 // ---------------------------------------------------------------------------
 
@@ -545,7 +586,7 @@ export async function classifyIntent(
   }
 
   try {
-    const parsed: unknown = JSON.parse(rawResponse.trim());
+    const parsed: unknown = JSON.parse(stripFences(rawResponse));
     if (isParsedIntent(parsed)) {
       return parsed;
     }
@@ -597,8 +638,7 @@ export async function generateFileChanges(
   }
 
   try {
-    const trimmed = rawResponse.trim();
-    const parsed: unknown = JSON.parse(trimmed);
+    const parsed: unknown = JSON.parse(stripFences(rawResponse));
 
     if (!Array.isArray(parsed)) return [];
 
