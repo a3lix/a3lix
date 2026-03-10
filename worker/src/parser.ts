@@ -445,9 +445,9 @@ export async function callAi(
     case 'groq':
     case 'openrouter': {
       if (!apiKey) throw new Error(`Provider "${provider}" requires an apiKey in AiConfig`);
-      const extraHeaders = provider === 'openrouter'
+      const extraHeaders: Record<string, string> | undefined = provider === 'openrouter'
         ? { 'HTTP-Referer': 'https://a3lix.com', 'X-Title': 'A3lix' }
-        : {};
+        : undefined;
       return callOpenAiCompatible(PROVIDER_URLS[provider], apiKey, model, system, user, extraHeaders);
     }
 

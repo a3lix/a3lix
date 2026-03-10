@@ -3,7 +3,7 @@
  * setup/cli.ts — A3lix interactive CLI wizard
  *
  * Runs in Node.js (NOT in the Cloudflare Worker runtime).
- * Executed when a client runs: npx a3lix@latest init | update | status | whoami
+ * Executed when a client runs: npx a3lixcms@latest init | update | status | whoami
  */
 
 import { Command } from 'commander';
@@ -213,7 +213,7 @@ function printBanner(): void {
   );
   console.log(
     chalk.blue('  ║') +
-      chalk.dim('   npx a3lix@latest init       ') +
+      chalk.dim('   npx a3lixcms@latest init    ') +
       chalk.blue('║')
   );
   console.log(chalk.blue('  ╚═══════════════════════════════╝'));
@@ -232,7 +232,7 @@ function readAgentJson(cwd: string): AgentJson {
   const agentPath = join(cwd, 'agent.json');
   if (!existsSync(agentPath)) {
     console.error(chalk.red('❌  No agent.json found in the current directory.'));
-    console.error(chalk.dim('   Run `npx a3lix init` first.'));
+    console.error(chalk.dim('   Run `npx a3lixcms init` first.'));
     process.exit(1);
   }
   try {
@@ -677,7 +677,7 @@ async function runInit(): Promise<void> {
 
     const wranglerToml = [
       `name = "a3lix-worker"`,
-      `main = "./node_modules/a3lix/worker/src/index.ts"`,
+      `main = "./node_modules/a3lixcms/worker/src/index.ts"`,
       `compatibility_date = "2024-05-29"`,
       `compatibility_flags = ["nodejs_compat"]`,
       ``,
@@ -951,7 +951,7 @@ async function runUpdate(): Promise<void> {
   const agentPath = join(cwd, 'agent.json');
   if (!existsSync(agentPath)) {
     console.error(chalk.red('❌  No agent.json found.'));
-    console.error(chalk.dim('   Run `npx a3lix init` first.'));
+    console.error(chalk.dim('   Run `npx a3lixcms init` first.'));
     process.exit(1);
   }
 
@@ -961,13 +961,13 @@ async function runUpdate(): Promise<void> {
   // Step 1 — Install latest
   {
     const spinner = ora('Checking for updates…').start();
-    const result = await runCommand('npm', ['install', 'a3lix@latest']);
+    const result = await runCommand('npm', ['install', 'a3lixcms@latest']);
     if (result.exitCode !== 0) {
-      spinner.fail(chalk.red('Failed to install a3lix@latest.'));
+      spinner.fail(chalk.red('Failed to install a3lixcms@latest.'));
       console.error(chalk.dim(result.stderr));
       process.exit(1);
     }
-    spinner.succeed(chalk.green('a3lix@latest installed.'));
+    spinner.succeed(chalk.green('a3lixcms@latest installed.'));
   }
 
   // Step 2 — Verify / restore protected files
@@ -1112,7 +1112,7 @@ async function runWhoami(): Promise<void> {
 const program = new Command();
 
 program
-  .name('a3lix')
+  .name('a3lixcms')
   .version('0.1.0')
   .description(
     'A3lix — the open-source Cloudflare Workers + AI site update agent'
@@ -1178,10 +1178,10 @@ program.addHelpText(
   'after',
   `
 ${chalk.dim('Examples:')}
-  ${chalk.green('npx a3lix@latest init')}       Set up a new A3lix agent in this directory
-  ${chalk.green('npx a3lix update')}             Update to the latest A3lix version
-  ${chalk.green('npx a3lix status')}             Check worker health
-  ${chalk.green('npx a3lix whoami')}             Show current config
+  ${chalk.green('npx a3lixcms@latest init')}     Set up a new A3lix agent in this directory
+  ${chalk.green('npx a3lixcms update')}          Update to the latest A3lix version
+  ${chalk.green('npx a3lixcms status')}          Check worker health
+  ${chalk.green('npx a3lixcms whoami')}          Show current config
 `
 );
 

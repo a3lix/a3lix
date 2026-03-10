@@ -87,7 +87,7 @@ Connect this repo to Cloudflare Pages with these settings:
 Copy `agent.json.example` → `agent.json` and fill in your values, then run:
 
 ```bash
-npx a3lix@latest init
+npx a3lixcms@latest init
 ```
 
 ---

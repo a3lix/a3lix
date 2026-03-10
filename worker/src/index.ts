@@ -118,6 +118,10 @@ export interface Env {
   TELEGRAM_SECRET_TOKEN: string;
   /** API key for non-Workers-AI providers (openai, claude, grok, groq, gemini). */
   AI_API_KEY: string;
+  /** Optional Cloudflare account ID for Pages deployment polling. */
+  CF_ACCOUNT_ID?: string;
+  /** Optional Cloudflare API token for Pages deployment polling. */
+  CF_API_TOKEN?: string;
 
   // ── Vars (from `wrangler.toml [vars]`) ───────────────────────────────────
   /** Runtime environment name, e.g. `"production"` or `"development"`. */
@@ -547,6 +551,10 @@ async function handleChangeRequest(
       userId,
       changes: githubChanges,
       summary,
+      env: {
+        ...(env.CF_ACCOUNT_ID !== undefined ? { CF_ACCOUNT_ID: env.CF_ACCOUNT_ID } : {}),
+        ...(env.CF_API_TOKEN !== undefined ? { CF_API_TOKEN: env.CF_API_TOKEN } : {}),
+      },
     });
 
     // ── 8. Store pending approval ─────────────────────────────────────────────
