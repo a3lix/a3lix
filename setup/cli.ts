@@ -343,9 +343,9 @@ async function runInit(): Promise<void> {
         default: 'main',
       },
       {
-        type: 'list',
+        type: 'rawlist',
         name: 'framework',
-        message: 'Framework?',
+        message: 'Framework? (type a number)',
         choices: ['astro', 'nextjs'],
       },
       {
@@ -404,9 +404,9 @@ async function runInit(): Promise<void> {
 
     const step3a = await inquirer.prompt<{ aiProviderRaw: string }>([
       {
-        type: 'list',
+        type: 'rawlist',
         name: 'aiProviderRaw',
-        message: 'AI provider?',
+        message: 'AI provider? (type a number)',
         choices: aiProviderChoices,
       },
     ]);

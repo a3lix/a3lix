@@ -452,6 +452,17 @@ async function handleChangeRequest(
       operation: c.operation as 'create' | 'update' | 'delete',
     }));
 
+    // Guard: AI returned no file changes — ask user to rephrase.
+    if (fileChanges.length === 0) {
+      console.error('[a3lix] handleChangeRequest: generateFileChanges returned empty array for intent:', intent.type);
+      await sendTelegramMessage({
+        chatId,
+        text: replyUnknownIntent(),
+        botToken: env.TELEGRAM_BOT_TOKEN,
+      });
+      return;
+    }
+
     // ── 5. Run all guardrails ─────────────────────────────────────────────────
     const guardrailConfig: GuardrailConfig = {
       allowedPaths: config.paths.allowed,
