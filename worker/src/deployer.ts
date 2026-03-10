@@ -109,11 +109,16 @@ function toAbsoluteUrl(urlLike: string): string {
   return /^https?:\/\//i.test(urlLike) ? urlLike : `https://${urlLike}`;
 }
 
+interface PreviewResolutionResult {
+  url: string;
+  ready: boolean;
+}
+
 async function waitForPreviewByUrl(params: {
   previewUrl: string;
   timeoutMs: number;
   intervalMs: number;
-}): Promise<string> {
+}): Promise<PreviewResolutionResult> {
   const { previewUrl, timeoutMs, intervalMs } = params;
   const startedAt = Date.now();
 
@@ -122,7 +127,7 @@ async function waitForPreviewByUrl(params: {
       const probeUrl = `${previewUrl}?__a3lix_probe=${Date.now()}`;
       const res = await fetch(probeUrl, { method: 'GET' });
       if (res.status >= 200 && res.status < 400) {
-        return previewUrl;
+        return { url: previewUrl, ready: true };
       }
     } catch {
       // ignore and retry
@@ -131,7 +136,7 @@ async function waitForPreviewByUrl(params: {
     await sleep(intervalMs);
   }
 
-  throw new Error('Timed out waiting for preview URL to become reachable.');
+  return { url: previewUrl, ready: false };
 }
 
 async function waitForPreviewByPagesApi(params: {
@@ -141,7 +146,7 @@ async function waitForPreviewByPagesApi(params: {
   branchName: string;
   timeoutMs: number;
   intervalMs: number;
-}): Promise<string> {
+}): Promise<PreviewResolutionResult> {
   const {
     accountId,
     apiToken,
@@ -152,7 +157,6 @@ async function waitForPreviewByPagesApi(params: {
   } = params;
 
   const startedAt = Date.now();
-  let lastError = '';
 
   while (Date.now() - startedAt < timeoutMs) {
     try {
@@ -168,7 +172,6 @@ async function waitForPreviewByPagesApi(params: {
       });
 
       if (!res.ok) {
-        lastError = `Cloudflare Pages API HTTP ${res.status}`;
         await sleep(intervalMs);
         continue;
       }
@@ -188,14 +191,20 @@ async function waitForPreviewByPagesApi(params: {
       }
 
       const stageStatus = (match.latest_stage?.status ?? match.status ?? '').toLowerCase();
+      const alias = match.aliases?.find((a) => a.includes('.pages.dev'));
+      const candidateUrl =
+        (typeof alias === 'string' && alias.length > 0)
+          ? toAbsoluteUrl(alias)
+          : (typeof match.url === 'string' && match.url.length > 0)
+            ? toAbsoluteUrl(match.url)
+            : null;
 
       if (stageStatus === 'success') {
-        const alias = match.aliases?.find((a) => a.includes('.pages.dev'));
-        if (alias) return toAbsoluteUrl(alias);
-        if (typeof match.url === 'string' && match.url.length > 0) {
-          return toAbsoluteUrl(match.url);
-        }
-        throw new Error('Deployment succeeded but no URL was returned by Cloudflare Pages API.');
+        if (candidateUrl) return { url: candidateUrl, ready: true };
+        return {
+          url: buildPreviewUrl(branchName, pagesProjectName),
+          ready: true,
+        };
       }
 
       if (
@@ -207,18 +216,23 @@ async function waitForPreviewByPagesApi(params: {
       ) {
         throw new Error(`Cloudflare Pages preview build failed with status "${stageStatus}".`);
       }
+
+      // A deployment record exists for this branch but isn't fully ready yet.
+      // Return its concrete URL now so Telegram gets the correct preview link.
+      if (candidateUrl) {
+        return { url: candidateUrl, ready: false };
+      }
     } catch (err) {
-      lastError = err instanceof Error ? err.message : 'Unknown error while polling Pages API';
+      console.error('[a3lix] waitForPreviewByPagesApi poll error:', err);
     }
 
     await sleep(intervalMs);
   }
 
-  throw new Error(
-    `Timed out waiting for Cloudflare Pages preview readiness${
-      lastError ? ` (${lastError})` : ''
-    }.`,
-  );
+  return {
+    url: buildPreviewUrl(branchName, pagesProjectName),
+    ready: false,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -319,37 +333,29 @@ export async function deployPreview(params: {
   const intervalMs = 5_000;
   const estimatedBuildSeconds = deployConfig.framework === 'astro' ? 45 : 60;
 
-  let previewUrl = result.previewUrl;
-  let previewReady = false;
-
-  try {
-    previewUrl =
-      env?.CF_ACCOUNT_ID && env?.CF_API_TOKEN
-        ? await waitForPreviewByPagesApi({
-            accountId: env.CF_ACCOUNT_ID,
-            apiToken: env.CF_API_TOKEN,
-            pagesProjectName: deployConfig.pagesProjectName,
-            branchName: result.branchName,
-            timeoutMs,
-            intervalMs,
-          })
-        : await waitForPreviewByUrl({
-            previewUrl: result.previewUrl,
-            timeoutMs,
-            intervalMs,
-          });
-    previewReady = true;
-  } catch (error) {
-    console.error('[a3lix] deployPreview readiness check failed, falling back to deterministic preview URL:', error);
-  }
+  const resolution =
+    env?.CF_ACCOUNT_ID && env?.CF_API_TOKEN
+      ? await waitForPreviewByPagesApi({
+          accountId: env.CF_ACCOUNT_ID,
+          apiToken: env.CF_API_TOKEN,
+          pagesProjectName: deployConfig.pagesProjectName,
+          branchName: result.branchName,
+          timeoutMs,
+          intervalMs,
+        })
+      : await waitForPreviewByUrl({
+          previewUrl: result.previewUrl,
+          timeoutMs,
+          intervalMs,
+        });
 
   return {
     branchName: result.branchName,
-    previewUrl,
+    previewUrl: resolution.url,
     commitSha: result.commitSha,
     deployedAt: new Date().toISOString(),
     estimatedBuildSeconds,
-    previewReady,
+    previewReady: resolution.ready,
   };
 }
 
