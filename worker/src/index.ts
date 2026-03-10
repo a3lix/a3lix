@@ -1152,14 +1152,10 @@ async function handleTelegramWebhook(
     return new Response('OK', { status: 200 });
   }
 
-  // ── 7. Route message asynchronously and ACK Telegram immediately ──────────
-  ctx.waitUntil(
-    routeMessage(text, userId, chatId, displayName, config, env).catch((error: unknown) => {
-      console.error('[a3lix] routeMessage failed:', error);
-    }),
-  );
+  // ── 7. Route message synchronously (idempotency guard prevents duplicate work) ─
+  await routeMessage(text, userId, chatId, displayName, config, env);
 
-  // ── 8. Always return 200 to Telegram quickly (prevents retries/duplicates) ─
+  // ── 8. Always return 200 to Telegram ──────────────────────────────────────
   return new Response('OK', { status: 200 });
 }
 
