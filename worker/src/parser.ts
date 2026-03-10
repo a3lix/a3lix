@@ -128,9 +128,20 @@ const CLARIFICATION_QUESTIONS: Partial<Record<IntentType, string[]>> = {
 // Single-pass system prompt
 // ---------------------------------------------------------------------------
 
-function buildSystemPrompt(framework: 'astro' | 'nextjs', fileTree?: string): string {
+function buildSystemPrompt(
+  framework: 'astro' | 'nextjs',
+  fileTree?: string,
+  fileContents?: Record<string, string>,
+): string {
   const treeSection = fileTree
-    ? `\n\nRepository source files (use EXACT paths from this list — match case precisely):\n${fileTree}\n\nIMPORTANT: For files that already exist in the list above, use operation:"update". Use operation:"create" only for genuinely new files.`
+    ? `\n\nRepository source files (use EXACT paths — match case precisely):\n${fileTree}\n\nIMPORTANT: For files that already exist in the list above, use operation:"update". Use operation:"create" only for genuinely new files.`
+    : '';
+
+  const contentSection = fileContents && Object.keys(fileContents).length > 0
+    ? '\n\nCurrent file contents (make ONLY the minimal change requested — preserve ALL other code, imports, animations, styling, components exactly as-is):\n' +
+      Object.entries(fileContents)
+        .map(([path, content]) => `\n--- ${path} ---\n${content}\n--- end ${path} ---`)
+        .join('\n')
     : '';
 
   return `You are A3lix, an AI agent that helps non-technical clients update their ${framework} website by text message.
@@ -157,11 +168,12 @@ Analyse the user's message and respond with ONLY valid JSON — no markdown, no 
 Rules:
 - status_check: user asks what is currently deployed → set requiresFileChanges:false, changes:[], summary describes status
 - unknown: cannot classify → set requiresFileChanges:false, changes:[], summary asks user to rephrase
-- For any edit/create intent: populate changes with the COMPLETE new file content (never partial)
+- CRITICAL: When current file contents are provided, make ONLY the minimal surgical change requested. Copy everything else EXACTLY — preserve all imports, animations, styling, event handlers, props, and structure unchanged.
+- For any edit/create intent: populate changes with the COMPLETE file content (never partial)
 - Framework: ${framework}
 - Generate clean, production-quality code
 - NEVER include process.env, eval, require('child_process'), .env references, or secrets
-- Return ONLY the JSON object, starting with { and ending with }${treeSection}`;
+- Return ONLY the JSON object, starting with { and ending with }${treeSection}${contentSection}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -420,9 +432,10 @@ export async function parse(params: {
   aiConfig: AiConfig;
   aiBinding: Ai;
   fileTree?: string;
+  fileContents?: Record<string, string>;
 }): Promise<ParseResult> {
-  const { message, framework, aiConfig, aiBinding, fileTree } = params;
-  const systemPrompt = buildSystemPrompt(framework, fileTree);
+  const { message, framework, aiConfig, aiBinding, fileTree, fileContents } = params;
+  const systemPrompt = buildSystemPrompt(framework, fileTree, fileContents);
 
   let rawResponse: string;
   try {

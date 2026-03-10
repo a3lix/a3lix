@@ -398,27 +398,63 @@ async function handleChangeRequest(
       aiConfig.apiKey = env.AI_API_KEY;
     }
 
-    // ── 2. Fetch repo file tree for accurate path targeting ───────────────────
+    // ── 2. Fetch repo file tree + likely file contents ────────────────────────
     let fileTree: string | undefined;
+    let fileContents: Record<string, string> | undefined;
     try {
-      const repoParts = config.project.repo.split('/');
+      const ghHeaders = {
+        'Authorization': `Bearer ${env.GITHUB_TOKEN}`,
+        'Accept': 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+        'User-Agent': 'A3lix-Bot/0.1',
+      };
       const treeUrl = `https://api.github.com/repos/${config.project.repo}/git/trees/${config.project.branch}?recursive=1`;
-      const treeResp = await fetch(treeUrl, {
-        headers: {
-          'Authorization': `Bearer ${env.GITHUB_TOKEN}`,
-          'Accept': 'application/vnd.github+json',
-          'X-GitHub-Api-Version': '2022-11-28',
-          'User-Agent': 'A3lix-Bot/0.1',
-        },
-      });
+      const treeResp = await fetch(treeUrl, { headers: ghHeaders });
       if (treeResp.ok) {
         const treeData = await treeResp.json() as { tree?: Array<{ path: string; type: string }> };
         const allowedExts = /\.(tsx?|jsx?|astro|mdx?|json|css|html)$/;
-        const files = (treeData.tree ?? [])
+        const allFiles = (treeData.tree ?? [])
           .filter(f => f.type === 'blob' && allowedExts.test(f.path) && !f.path.includes('node_modules') && !f.path.includes('.next') && !f.path.startsWith('.'))
-          .map(f => f.path)
-          .slice(0, 80); // cap at 80 files to keep prompt short
-        fileTree = files.join('\n');
+          .map(f => f.path);
+        fileTree = allFiles.slice(0, 80).join('\n');
+
+        // Heuristically identify likely target files based on message keywords
+        const msgLower = text.toLowerCase();
+        const keywords = [
+          { words: ['hero', 'banner', 'headline', 'heading'], pattern: /hero/i },
+          { words: ['footer', 'copyright'], pattern: /footer/i },
+          { words: ['header', 'nav', 'navigation', 'menu'], pattern: /header|nav/i },
+          { words: ['color', 'colour', 'brand', 'theme', 'tailwind'], pattern: /tailwind|globals?\.css/i },
+          { words: ['page', 'home', 'index'], pattern: /page|index/i },
+        ];
+        const targetFiles: string[] = [];
+        for (const { words, pattern } of keywords) {
+          if (words.some(w => msgLower.includes(w))) {
+            allFiles.filter(f => pattern.test(f) && !f.includes('/ui/')).forEach(f => {
+              if (!targetFiles.includes(f)) targetFiles.push(f);
+            });
+          }
+        }
+        // Fetch content of up to 3 target files
+        if (targetFiles.length > 0) {
+          fileContents = {};
+          const toFetch = targetFiles.slice(0, 3);
+          await Promise.all(toFetch.map(async (filePath) => {
+            try {
+              const contentUrl = `https://api.github.com/repos/${config.project.repo}/contents/${filePath}?ref=${config.project.branch}`;
+              const contentResp = await fetch(contentUrl, { headers: ghHeaders });
+              if (contentResp.ok) {
+                const contentData = await contentResp.json() as { content?: string; encoding?: string };
+                if (contentData.encoding === 'base64' && contentData.content) {
+                  const decoded = atob(contentData.content.replace(/\n/g, ''));
+                  if (fileContents) fileContents[filePath] = decoded;
+                }
+              }
+            } catch {
+              // Non-fatal — proceed without this file's content
+            }
+          }));
+        }
       }
     } catch {
       // Non-fatal — proceed without file tree
@@ -431,6 +467,7 @@ async function handleChangeRequest(
       aiConfig,
       aiBinding: env.AI,
       ...(fileTree !== undefined ? { fileTree } : {}),
+      ...(fileContents !== undefined && Object.keys(fileContents).length > 0 ? { fileContents } : {}),
     });
 
     const { intent, changes, summary, clarifications } = parseResult;
