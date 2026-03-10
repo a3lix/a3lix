@@ -180,7 +180,7 @@ export function replyPreviewReady(params: {
   return (
     `🚀 *Preview ready\\!*\n\n` +
     `📝 ${esc(summary)}\n\n` +
-    `🔗 [Open preview](${esc(previewUrl)})\n\n` +
+    `🔗 [Open preview](${previewUrl})\n\n` +
     `🌿 Branch: \`${esc(branchName)}\`\n\n` +
     `⏱ Build takes ~*${esc(String(estimatedSeconds))} seconds* to complete\\.\n\n` +
     `✅ Reply *YES* to publish to your live site, or anything else to cancel\\.`
@@ -195,7 +195,7 @@ export function replyPreviewReady(params: {
  */
 export function replyApprovalPending(previewUrl: string): string {
   return (
-    `⏳ Your preview is live at [this link](${esc(previewUrl)})\\.\n\n` +
+    `⏳ Your preview is live at [this link](${previewUrl})\\.\n\n` +
     `The owner needs to approve it before it goes live — I've notified them\\!`
   );
 }
