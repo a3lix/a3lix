@@ -191,16 +191,15 @@ async function waitForPreviewByPagesApi(params: {
       }
 
       const stageStatus = (match.latest_stage?.status ?? match.status ?? '').toLowerCase();
-      const alias = match.aliases?.find((a) => a.includes('.pages.dev'));
-      const candidateUrl =
-        (typeof alias === 'string' && alias.length > 0)
-          ? toAbsoluteUrl(alias)
-          : (typeof match.url === 'string' && match.url.length > 0)
-            ? toAbsoluteUrl(match.url)
-            : null;
 
       if (stageStatus === 'success') {
-        if (candidateUrl) return { url: candidateUrl, ready: true };
+        const alias = match.aliases?.find((a) => a.includes('.pages.dev'));
+        if (typeof alias === 'string' && alias.length > 0) {
+          return { url: toAbsoluteUrl(alias), ready: true };
+        }
+        if (typeof match.url === 'string' && match.url.length > 0) {
+          return { url: toAbsoluteUrl(match.url), ready: true };
+        }
         return {
           url: buildPreviewUrl(branchName, pagesProjectName),
           ready: true,
@@ -215,12 +214,6 @@ async function waitForPreviewByPagesApi(params: {
         stageStatus === 'cancelled'
       ) {
         throw new Error(`Cloudflare Pages preview build failed with status "${stageStatus}".`);
-      }
-
-      // A deployment record exists for this branch but isn't fully ready yet.
-      // Return its concrete URL now so Telegram gets the correct preview link.
-      if (candidateUrl) {
-        return { url: candidateUrl, ready: false };
       }
     } catch (err) {
       console.error('[a3lix] waitForPreviewByPagesApi poll error:', err);
@@ -326,10 +319,7 @@ export async function deployPreview(params: {
     pagesProjectName: deployConfig.pagesProjectName,
   });
 
-  // Keep readiness probe short so Telegram webhook handling can complete
-  // quickly. If the preview isn't reachable yet, we still return the
-  // deterministic preview URL immediately.
-  const timeoutMs = 20_000;
+  const timeoutMs = deployConfig.framework === 'astro' ? 4 * 60_000 : 5 * 60_000;
   const intervalMs = 5_000;
   const estimatedBuildSeconds = deployConfig.framework === 'astro' ? 45 : 60;
 
