@@ -69,6 +69,7 @@ import {
   replyOtpInvalid,
   replyWelcomeEditor,
   replyParsing,
+  replyPreviewBuilding,
   replyUnknownIntent,
   replyNeedsClarification,
   replyPreviewReady,
@@ -585,6 +586,12 @@ async function handleChangeRequest(
       }));
 
     // ── 7. Deploy preview branch ──────────────────────────────────────────────
+    await sendTelegramMessage({
+      chatId,
+      text: replyPreviewBuilding(),
+      botToken: env.TELEGRAM_BOT_TOKEN,
+    });
+
     const deployResult = await deployPreview({
       githubConfig,
       deployConfig,

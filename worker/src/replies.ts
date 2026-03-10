@@ -84,6 +84,10 @@ export function replyParsing(): string {
   return `🔍 Got it! Analysing your request...`;
 }
 
+export function replyPreviewBuilding(): string {
+  return `🏗️ Change prepared. Triggering Cloudflare preview build now...`;
+}
+
 export function replyUnknownIntent(): string {
   return (
     `🤔 I didn't quite understand that.\n\n` +
