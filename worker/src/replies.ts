@@ -103,29 +103,64 @@ export function replyNeedsClarification(clarifications: string[]): string {
   );
 }
 
+export function replyDiffPreview(params: {
+  summary: string;
+  changes: Array<{ path: string; before?: string; after: string }>;
+  pendingId: string;
+}): string {
+  const { summary, changes, pendingId } = params;
+
+  // Build a readable diff for each changed file.
+  const diffLines: string[] = [];
+  for (const change of changes.slice(0, 3)) { // max 3 files shown
+    diffLines.push(`\n📄 <b>${esc(change.path)}</b>`);
+    if (change.before) {
+      // Find changed lines by comparing before/after
+      const beforeLines = change.before.split('\n');
+      const afterLines = change.after.split('\n');
+      let shownCount = 0;
+      for (let i = 0; i < Math.max(beforeLines.length, afterLines.length) && shownCount < 8; i++) {
+        const b = beforeLines[i] ?? '';
+        const a = afterLines[i] ?? '';
+        if (b !== a) {
+          if (b) diffLines.push(`  ➖ <i>${esc(b.trim().slice(0, 100))}</i>`);
+          if (a) diffLines.push(`  ➕ <i>${esc(a.trim().slice(0, 100))}</i>`);
+          shownCount++;
+        }
+      }
+      if (shownCount === 0) {
+        // Files differ but line numbers don't match — show first/last changed
+        diffLines.push(`  (content updated)`);
+      }
+    } else {
+      diffLines.push(`  (new file created)`);
+    }
+  }
+
+  return (
+    `✏️ <b>Here's what I'll change:</b>\n\n` +
+    `${esc(summary)}\n` +
+    diffLines.join('\n') +
+    `\n\n✅ Reply <b>YES</b> to apply\n❌ Reply <b>NO</b> to cancel`
+  );
+}
+
+export function replyApprovalPending(summary: string): string {
+  return (
+    `⏳ A change is waiting for your approval:\n\n${esc(summary)}\n\n` +
+    `Reply <b>YES</b> to approve and deploy, or <b>NO</b> to reject.`
+  );
+}
+
+/** @deprecated Use replyDiffPreview instead */
 export function replyPreviewReady(params: {
   summary: string;
   previewUrl: string;
   estimatedSeconds: number;
   branchName: string;
 }): string {
-  const { summary, previewUrl, estimatedSeconds, branchName } = params;
-  return (
-    `🚀 <b>Preview Ready!</b>\n\n` +
-    `📝 ${esc(summary)}\n\n` +
-    `🔗 <a href="${previewUrl}">Open preview</a>\n\n` +
-    `🌿 Branch: <code>${esc(branchName)}</code>\n\n` +
-    `⏱ Build takes ~${estimatedSeconds} seconds to complete.\n\n` +
-    `The site owner will review and approve or reject this change.`
-  );
-}
-
-export function replyApprovalPending(previewUrl: string): string {
-  return (
-    `⏳ A change is waiting for your approval.\n\n` +
-    `Preview: <a href="${previewUrl}">view here</a>\n\n` +
-    `Reply <b>YES</b> to approve and go live, or <b>NO</b> to reject.`
-  );
+  const { summary } = params;
+  return replyDiffPreview({ summary, changes: [], pendingId: '' });
 }
 
 export function replyMerged(params: { summary: string; commitSha: string }): string {

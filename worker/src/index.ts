@@ -384,6 +384,8 @@ async function handleChangeRequest(
   displayName: string | undefined,
   config: AgentConfig,
   env: Env,
+  preloadedFileTree?: string,
+  preloadedFileContents?: Record<string, string>,
 ): Promise<void> {
   try {
     // ── 1. Build AiConfig ────────────────────────────────────────────────────
@@ -398,76 +400,14 @@ async function handleChangeRequest(
       aiConfig.apiKey = env.AI_API_KEY;
     }
 
-    // ── 2. Fetch repo file tree + likely file contents ────────────────────────
-    let fileTree: string | undefined;
-    let fileContents: Record<string, string> | undefined;
-    try {
-      const ghHeaders = {
-        'Authorization': `Bearer ${env.GITHUB_TOKEN}`,
-        'Accept': 'application/vnd.github+json',
-        'X-GitHub-Api-Version': '2022-11-28',
-        'User-Agent': 'A3lix-Bot/0.1',
-      };
-      const treeUrl = `https://api.github.com/repos/${config.project.repo}/git/trees/${config.project.branch}?recursive=1`;
-      const treeResp = await fetch(treeUrl, { headers: ghHeaders });
-      if (treeResp.ok) {
-        const treeData = await treeResp.json() as { tree?: Array<{ path: string; type: string }> };
-        const allowedExts = /\.(tsx?|jsx?|astro|mdx?|json|css|html)$/;
-        const allFiles = (treeData.tree ?? [])
-          .filter(f => f.type === 'blob' && allowedExts.test(f.path) && !f.path.includes('node_modules') && !f.path.includes('.next') && !f.path.startsWith('.'))
-          .map(f => f.path);
-        fileTree = allFiles.slice(0, 80).join('\n');
-
-        // Heuristically identify likely target files based on message keywords
-        const msgLower = text.toLowerCase();
-        const keywords = [
-          { words: ['hero', 'banner', 'headline', 'heading'], pattern: /hero/i },
-          { words: ['footer', 'copyright'], pattern: /footer/i },
-          { words: ['header', 'nav', 'navigation', 'menu'], pattern: /header|nav/i },
-          { words: ['color', 'colour', 'brand', 'theme', 'tailwind'], pattern: /tailwind|globals?\.css/i },
-          { words: ['page', 'home', 'index'], pattern: /page|index/i },
-        ];
-        const targetFiles: string[] = [];
-        for (const { words, pattern } of keywords) {
-          if (words.some(w => msgLower.includes(w))) {
-            allFiles.filter(f => pattern.test(f) && !f.includes('/ui/')).forEach(f => {
-              if (!targetFiles.includes(f)) targetFiles.push(f);
-            });
-          }
-        }
-        // Fetch content of up to 3 target files
-        if (targetFiles.length > 0) {
-          fileContents = {};
-          const toFetch = targetFiles.slice(0, 3);
-          await Promise.all(toFetch.map(async (filePath) => {
-            try {
-              const contentUrl = `https://api.github.com/repos/${config.project.repo}/contents/${filePath}?ref=${config.project.branch}`;
-              const contentResp = await fetch(contentUrl, { headers: ghHeaders });
-              if (contentResp.ok) {
-                const contentData = await contentResp.json() as { content?: string; encoding?: string };
-                if (contentData.encoding === 'base64' && contentData.content) {
-                  const decoded = atob(contentData.content.replace(/\n/g, ''));
-                  if (fileContents) fileContents[filePath] = decoded;
-                }
-              }
-            } catch {
-              // Non-fatal — proceed without this file's content
-            }
-          }));
-        }
-      }
-    } catch {
-      // Non-fatal — proceed without file tree
-    }
-
-    // ── 3. Parse ─────────────────────────────────────────────────────────────
+    // ── 2. Parse (using pre-fetched file tree + contents from routeMessage) ─────
     const parseResult: ParseResult = await parse({
       message: text,
       framework: config.project.framework,
       aiConfig,
       aiBinding: env.AI,
-      ...(fileTree !== undefined ? { fileTree } : {}),
-      ...(fileContents !== undefined && Object.keys(fileContents).length > 0 ? { fileContents } : {}),
+      ...(preloadedFileTree !== undefined ? { fileTree: preloadedFileTree } : {}),
+      ...(preloadedFileContents !== undefined && Object.keys(preloadedFileContents).length > 0 ? { fileContents: preloadedFileContents } : {}),
     });
 
     const { intent, changes, summary, clarifications } = parseResult;
@@ -996,6 +936,62 @@ async function routeMessage(
     return;
   }
 
+  // Pre-fetch repo file tree + likely file contents BEFORE waitUntil
+  // (fetch calls here don't count against the 30s waitUntil CPU budget).
+  let preloadedFileTree: string | undefined;
+  let preloadedFileContents: Record<string, string> | undefined;
+  try {
+    const ghHeaders = {
+      'Authorization': `Bearer ${env.GITHUB_TOKEN}`,
+      'Accept': 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+      'User-Agent': 'A3lix-Bot/0.1',
+    };
+    const treeUrl = `https://api.github.com/repos/${config.project.repo}/git/trees/${config.project.branch}?recursive=1`;
+    const treeResp = await fetch(treeUrl, { headers: ghHeaders });
+    if (treeResp.ok) {
+      const treeData = await treeResp.json() as { tree?: Array<{ path: string; type: string }> };
+      const allowedExts = /\.(tsx?|jsx?|astro|mdx?|json|css|html)$/;
+      const allFiles = (treeData.tree ?? [])
+        .filter(f => f.type === 'blob' && allowedExts.test(f.path) && !f.path.includes('node_modules') && !f.path.includes('.next') && !f.path.startsWith('.'))
+        .map(f => f.path);
+      preloadedFileTree = allFiles.slice(0, 80).join('\n');
+
+      // Identify likely target files from message keywords
+      const msgLower = text.toLowerCase();
+      const keywords = [
+        { words: ['hero', 'banner', 'headline', 'heading'], pattern: /hero/i },
+        { words: ['footer', 'copyright'], pattern: /footer/i },
+        { words: ['header', 'nav', 'navigation', 'menu'], pattern: /header|nav/i },
+        { words: ['color', 'colour', 'brand', 'theme', 'tailwind'], pattern: /tailwind|globals?\.css/i },
+        { words: ['home', 'index', 'main page'], pattern: /page|index/i },
+      ];
+      const targetFiles: string[] = [];
+      for (const { words, pattern } of keywords) {
+        if (words.some(w => msgLower.includes(w))) {
+          allFiles.filter(f => pattern.test(f) && !f.includes('/ui/')).forEach(f => {
+            if (!targetFiles.includes(f)) targetFiles.push(f);
+          });
+        }
+      }
+      if (targetFiles.length > 0) {
+        preloadedFileContents = {};
+        await Promise.all(targetFiles.slice(0, 2).map(async (filePath) => {
+          try {
+            const contentUrl = `https://api.github.com/repos/${config.project.repo}/contents/${filePath}?ref=${config.project.branch}`;
+            const contentResp = await fetch(contentUrl, { headers: ghHeaders });
+            if (contentResp.ok) {
+              const contentData = await contentResp.json() as { content?: string; encoding?: string };
+              if (contentData.encoding === 'base64' && contentData.content && preloadedFileContents) {
+                preloadedFileContents[filePath] = atob(contentData.content.replace(/\n/g, ''));
+              }
+            }
+          } catch { /* non-fatal */ }
+        }));
+      }
+    }
+  } catch { /* non-fatal */ }
+
   // Acknowledge immediately — AI + GitHub work runs in the background.
   await sendTelegramMessage({
     chatId,
@@ -1004,7 +1000,7 @@ async function routeMessage(
   }).catch(() => undefined);
 
   ctx.waitUntil(
-    handleChangeRequest(text, userId, chatId, displayName, config, env),
+    handleChangeRequest(text, userId, chatId, displayName, config, env, preloadedFileTree, preloadedFileContents),
   );
 }
 
