@@ -3,23 +3,16 @@
 /**
  * @module parser
  *
- * The 2-step AI parsing brain of A3lix.
+ * Single-pass AI parsing for A3lix.
  *
- * Takes a raw Telegram message and produces structured file-change instructions
- * using a two-pass AI approach:
+ * Combines intent classification AND file-change generation into ONE AI call.
+ * This cuts AI latency in half (one round-trip instead of two) and ensures
+ * the pipeline completes within Cloudflare Workers' 30-second waitUntil limit.
  *
- *   Step 1 — Classifier  (`classifyIntent`):
- *     Determines WHAT the user wants (intent) without generating any code.
- *     Cheap, fast, safe. Returns a structured {@link ParsedIntent} object.
- *
- *   Step 2 — Code Generator (`generateFileChanges`):
- *     Takes the classified intent + original message and generates actual file
- *     content. Only runs if Step 1 returns a valid, allowed intent.
- *
- * This split exists because:
- *   - A single "classify + generate" prompt is unreliable and leaks context
- *   - Step 1 can be run on a smaller/faster model
- *   - Step 2 can be aborted early if intent is disallowed
+ * The AI returns a single JSON object with three fields:
+ *   - intent   — classified intent (type, confidence, metadata, requiresFileChanges)
+ *   - changes  — array of file changes to apply
+ *   - summary  — human-readable description of what will be done
  *
  * AI provider routing is handled by {@link callAi}, which supports:
  *   workers-ai, openai, claude, grok, groq, gemini, openrouter
@@ -52,17 +45,6 @@ export interface AiConfig {
 
 /**
  * The classified intent types the agent can recognise.
- *
- * - `new_blog_post`    — User wants to create a new blog post entry.
- * - `new_page`         — User wants to create an entirely new page.
- * - `edit_text`        — User wants to change text on an existing page.
- * - `edit_colors`      — User wants to update colour values (Tailwind config).
- * - `edit_component`   — User wants to change a specific reusable component.
- * - `edit_footer`      — User wants to edit the site footer specifically.
- * - `edit_hero`        — User wants to edit the hero/banner section.
- * - `multi_file_edit`  — User described changes to multiple areas at once.
- * - `status_check`     — Viewer-safe: "what's deployed?", "what changed?".
- * - `unknown`          — Could not classify with sufficient confidence.
  */
 export type IntentType =
   | 'new_blog_post'
@@ -77,61 +59,32 @@ export type IntentType =
   | 'unknown';
 
 /**
- * The result of Step 1 (intent classification).
- * Contains everything needed to decide whether to proceed to Step 2.
+ * The classified intent from the AI.
  */
 export interface ParsedIntent {
-  /** The classified intent type. */
   type: IntentType;
-  /** How confident the classifier is in its classification. */
   confidence: 'high' | 'medium' | 'low';
-  /**
-   * Best-guess affected file paths from the classifier.
-   * May be empty; will be refined or replaced in Step 2.
-   */
   affectedPaths: string[];
-  /**
-   * Extracted key-value metadata (title, slug, color, section, author, etc.).
-   * All values are strings for simplicity and JSON compatibility.
-   */
   metadata: Record<string, string>;
-  /**
-   * Whether this intent requires actual file mutations.
-   * `false` for `status_check` and `unknown` — no code generation needed.
-   */
   requiresFileChanges: boolean;
 }
 
 /**
- * A single file change produced by the code generator (Step 2).
+ * A single file change produced by the AI.
  */
 export interface FileChange {
-  /** Repo-relative file path, e.g. `src/content/blog/my-post.md`. */
   path: string;
-  /** Complete file content as a UTF-8 string. Never partial. */
   content: string;
-  /** The mutation type. `delete` is intentionally excluded from generation. */
   operation: 'create' | 'update';
 }
 
 /**
  * The full result returned by {@link parse} to the caller.
- * Contains both the classified intent and all generated file changes.
  */
 export interface ParseResult {
-  /** The classified intent from Step 1. */
   intent: ParsedIntent;
-  /** The file changes generated in Step 2. Empty array if no changes needed. */
   changes: FileChange[];
-  /**
-   * Human-readable summary of what will be done, shown to the user before
-   * they confirm. E.g. "I'll create a new blog post at src/content/blog/…"
-   */
   summary: string;
-  /**
-   * Optional clarification questions from the AI, surfaced when confidence
-   * is `'low'`. Asking these helps the user refine their request.
-   */
   clarifications?: string[];
 }
 
@@ -139,11 +92,6 @@ export interface ParseResult {
 // Internal constants
 // ---------------------------------------------------------------------------
 
-/**
- * Provider base URLs for HTTP-based AI providers.
- * `workers-ai` is handled via the AI binding, not HTTP.
- * @internal
- */
 const PROVIDER_URLS: Record<Exclude<AiProvider, 'workers-ai'>, string> = {
   openai:      'https://api.openai.com/v1/chat/completions',
   grok:        'https://api.x.ai/v1/chat/completions',
@@ -153,12 +101,6 @@ const PROVIDER_URLS: Record<Exclude<AiProvider, 'workers-ai'>, string> = {
   openrouter:  'https://openrouter.ai/api/v1/chat/completions',
 };
 
-/**
- * Hardcoded clarification questions per intent type.
- * These are surfaced when Step 1 returns `confidence: 'low'`.
- * They are NOT AI-generated — deterministic and safe.
- * @internal
- */
 const CLARIFICATION_QUESTIONS: Partial<Record<IntentType, string[]>> = {
   new_blog_post: [
     "What should the blog post title be?",
@@ -182,56 +124,41 @@ const CLARIFICATION_QUESTIONS: Partial<Record<IntentType, string[]>> = {
   ],
 };
 
-/**
- * The classifier system prompt used in Step 1.
- * @internal
- */
-const CLASSIFIER_SYSTEM_PROMPT =
-  `You are a precise intent classifier for a website update agent. \
-Analyze the user's message and return ONLY valid JSON matching this schema — no markdown, no explanation:
+// ---------------------------------------------------------------------------
+// Single-pass system prompt
+// ---------------------------------------------------------------------------
+
+function buildSystemPrompt(framework: 'astro' | 'nextjs'): string {
+  return `You are A3lix, an AI agent that helps non-technical clients update their ${framework} website by text message.
+
+Analyse the user's message and respond with ONLY valid JSON — no markdown, no explanation, no code fences:
 {
-  "type": one of: new_blog_post|new_page|edit_text|edit_colors|edit_component|edit_footer|edit_hero|multi_file_edit|status_check|unknown,
-  "confidence": "high"|"medium"|"low",
-  "affectedPaths": [array of likely file paths, can be empty],
-  "metadata": {object of key-value strings extracted from the message},
-  "requiresFileChanges": true|false
+  "intent": {
+    "type": one of: new_blog_post|new_page|edit_text|edit_colors|edit_component|edit_footer|edit_hero|multi_file_edit|status_check|unknown,
+    "confidence": "high"|"medium"|"low",
+    "affectedPaths": [array of file paths that will be changed],
+    "metadata": {key-value strings extracted from the message, e.g. title, color, text},
+    "requiresFileChanges": true|false
+  },
+  "changes": [
+    {
+      "path": "repo-relative/path/to/file",
+      "content": "complete file content as a string",
+      "operation": "create"|"update"
+    }
+  ],
+  "summary": "Human-readable one-line description of what will be changed"
 }
 
 Rules:
-- status_check is for questions like "what's live?" or "what changed last week?" — no file changes
-- multi_file_edit when user says "also" or lists multiple sections to change
-- If you cannot classify with at least low confidence, return type: "unknown"
-- affectedPaths should use paths like "src/content/blog/slug.md" or "src/components/Footer.astro"
-- metadata should extract: title, slug, targetComponent, color, text, section, author
-- NEVER include any explanation outside the JSON object`;
-
-/**
- * Builds the code-generator system prompt used in Step 2.
- * Inlined as a function so the framework name can be interpolated at call time.
- * @internal
- */
-function buildGeneratorSystemPrompt(framework: 'astro' | 'nextjs'): string {
-  return `You are an expert ${framework} developer making precise, minimal file changes to a client website.
-You MUST return ONLY a JSON array of file change objects — no markdown fences, no explanation:
-[
-  {
-    "path": "relative/path/from/repo/root",
-    "content": "complete file content as a string",
-    "operation": "create"|"update"
-  }
-]
-
-Critical rules:
-- Return ONLY the JSON array, starting with [ and ending with ]
-- Every "content" field must be the COMPLETE file content (never partial)
-- For Markdown/MDX blog posts: include proper frontmatter (title, date, author, draft: false)
-- For Astro pages: use proper Astro component syntax with frontmatter
-- For Next.js pages: use TypeScript React with proper exports
-- Respect the detected framework: ${framework}
-- Only use paths within: src/content, src/components, src/pages, public, tailwind.config.*
-- Generate clean, production-quality code with no placeholder comments
-- If making color changes, update tailwind.config.ts/mjs — never inline styles
-- NEVER include process.env, eval, require('child_process'), or any secret references`;
+- status_check: user asks what is currently deployed → set requiresFileChanges:false, changes:[], summary describes status
+- unknown: cannot classify → set requiresFileChanges:false, changes:[], summary asks user to rephrase
+- For any edit/create intent: populate changes with the COMPLETE new file content (never partial)
+- Framework: ${framework}. Use correct file conventions:${framework === 'astro' ? '\n  - Pages: src/pages/*.astro\n  - Content: src/content/**/*.md or src/content/**/*.json\n  - Components: src/components/*.astro' : '\n  - Pages: app/**/page.tsx or pages/**/*.tsx\n  - Components: components/**/*.tsx\n  - Styles: styles/**/*.css or app/globals.css'}
+- Only use paths within: app, src/app, components, src/components, public, styles, src/styles, lib, src/lib, src/content, src/pages, tailwind.config.*
+- Generate clean, production-quality code
+- NEVER include process.env, eval, require('child_process'), .env references, or secrets
+- Return ONLY the JSON object, starting with { and ending with }`;
 }
 
 // ---------------------------------------------------------------------------
@@ -239,18 +166,8 @@ Critical rules:
 // ---------------------------------------------------------------------------
 
 /**
- * Strips markdown code fences and extracts the first JSON object or array
- * from a raw AI response string.
- *
- * Workers AI (and some other models) often wrap JSON in triple-backtick code
- * fences even when the prompt says not to. This function handles both forms:
- *   ```json\n{...}\n```   →  {...}
- *   ```\n[...]\n```        →  [...]
- *   raw {...}              →  {...}  (unchanged)
- *
- * @param raw - The raw string returned by the AI provider.
- * @returns The sanitised string, ready to pass to `JSON.parse()`.
- * @internal
+ * Strips markdown code fences and extracts the first JSON object from the
+ * raw AI response string.
  */
 function stripFences(raw: string): string {
   let cleaned = raw.trim();
@@ -261,80 +178,55 @@ function stripFences(raw: string): string {
     cleaned = fenceMatch[1].trim();
   }
 
-  // Extract the first JSON object {...} or array [...] — handles leading prose.
+  // Extract the first JSON object {...} — handles leading prose.
   const objectMatch = cleaned.match(/\{[\s\S]*\}/);
-  const arrayMatch  = cleaned.match(/\[[\s\S]*\]/);
-
-  if (objectMatch && !arrayMatch) return objectMatch[0];
-  if (arrayMatch  && !objectMatch) return arrayMatch[0];
-  if (objectMatch && arrayMatch) {
-    // Return whichever starts earlier in the string.
-    return objectMatch.index! <= arrayMatch.index! ? objectMatch[0] : arrayMatch[0];
-  }
+  if (objectMatch) return objectMatch[0];
 
   return cleaned;
 }
 
 // ---------------------------------------------------------------------------
-// Safe fallback values
+// Safe fallback
 // ---------------------------------------------------------------------------
 
-/**
- * Returned by {@link classifyIntent} whenever Step 1 JSON parsing fails.
- * @internal
- */
-const FALLBACK_INTENT: ParsedIntent = {
-  type: 'unknown',
-  confidence: 'low',
-  affectedPaths: [],
-  metadata: {},
-  requiresFileChanges: false,
+const FALLBACK_RESULT: ParseResult = {
+  intent: {
+    type: 'unknown',
+    confidence: 'low',
+    affectedPaths: [],
+    metadata: {},
+    requiresFileChanges: false,
+  },
+  changes: [],
+  summary: "I didn't quite understand that. Could you rephrase? For example: 'Change the hero headline to…', 'Add a blog post about…'",
 };
 
 // ---------------------------------------------------------------------------
 // Type guards
 // ---------------------------------------------------------------------------
 
-/**
- * Narrows an `unknown` value to a valid {@link ParsedIntent} shape.
- * @internal
- */
 function isParsedIntent(value: unknown): value is ParsedIntent {
   if (typeof value !== 'object' || value === null) return false;
-
   const v = value as Record<string, unknown>;
-
   const validTypes: IntentType[] = [
     'new_blog_post', 'new_page', 'edit_text', 'edit_colors',
     'edit_component', 'edit_footer', 'edit_hero', 'multi_file_edit',
     'status_check', 'unknown',
   ];
   if (!validTypes.includes(v['type'] as IntentType)) return false;
-
-  if (v['confidence'] !== 'high' && v['confidence'] !== 'medium' && v['confidence'] !== 'low') {
-    return false;
-  }
-
+  if (v['confidence'] !== 'high' && v['confidence'] !== 'medium' && v['confidence'] !== 'low') return false;
   if (!Array.isArray(v['affectedPaths'])) return false;
   if (typeof v['metadata'] !== 'object' || v['metadata'] === null) return false;
   if (typeof v['requiresFileChanges'] !== 'boolean') return false;
-
   return true;
 }
 
-/**
- * Narrows an `unknown` value to a valid {@link FileChange} shape.
- * @internal
- */
 function isFileChange(value: unknown): value is FileChange {
   if (typeof value !== 'object' || value === null) return false;
-
   const v = value as Record<string, unknown>;
-
   if (typeof v['path'] !== 'string' || v['path'].trim() === '') return false;
   if (typeof v['content'] !== 'string') return false;
   if (v['operation'] !== 'create' && v['operation'] !== 'update') return false;
-
   return true;
 }
 
@@ -342,10 +234,6 @@ function isFileChange(value: unknown): value is FileChange {
 // HTTP provider helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Calls an OpenAI-compatible API (openai, grok, groq, openrouter).
- * @internal
- */
 async function callOpenAiCompatible(
   url: string,
   apiKey: string,
@@ -389,10 +277,6 @@ async function callOpenAiCompatible(
   return content;
 }
 
-/**
- * Calls the Anthropic Claude API.
- * @internal
- */
 async function callClaude(
   apiKey: string,
   model: string,
@@ -400,12 +284,11 @@ async function callClaude(
   user: string,
 ): Promise<string> {
   const url = PROVIDER_URLS.claude;
-
   const response = await fetch(url, {
     method: 'POST',
     headers: {
-      'Content-Type':    'application/json',
-      'x-api-key':       apiKey,
+      'Content-Type':      'application/json',
+      'x-api-key':         apiKey,
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
@@ -432,10 +315,6 @@ async function callClaude(
   return text;
 }
 
-/**
- * Calls the Google Gemini API.
- * @internal
- */
 async function callGemini(
   apiKey: string,
   model: string,
@@ -443,17 +322,12 @@ async function callGemini(
   user: string,
 ): Promise<string> {
   const url = `${PROVIDER_URLS.gemini}/${model}:generateContent?key=${apiKey}`;
-
   const response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      contents: [
-        { parts: [{ text: user }] },
-      ],
-      systemInstruction: {
-        parts: [{ text: system }],
-      },
+      contents: [{ parts: [{ text: user }] }],
+      systemInstruction: { parts: [{ text: system }] },
     }),
   });
 
@@ -476,25 +350,9 @@ async function callGemini(
 }
 
 // ---------------------------------------------------------------------------
-// Exported functions
+// callAi — exported for testing
 // ---------------------------------------------------------------------------
 
-/**
- * Routes an AI prompt to the correct provider and returns the raw text
- * response. Supports all six providers declared in `AiProvider`.
- *
- * Provider routing:
- *   - `workers-ai` → `aiBinding.run()` (no HTTP, uses Cloudflare AI binding)
- *   - `openai` / `grok` / `groq` / `openrouter` → OpenAI-compatible chat completions API
- *   - `claude` → Anthropic Messages API
- *   - `gemini` → Google Generative Language API
- *
- * @param prompt    - Object containing `system` and `user` prompt strings.
- * @param aiConfig  - Provider config (provider, model, apiKey).
- * @param aiBinding - Cloudflare `Ai` binding (required for `workers-ai`; ignored otherwise).
- * @returns Raw text response from the AI provider.
- * @throws `Error` with the provider name and HTTP status on any network or API error.
- */
 export async function callAi(
   prompt: { system: string; user: string },
   aiConfig: AiConfig,
@@ -505,7 +363,6 @@ export async function callAi(
 
   switch (provider) {
     case 'workers-ai': {
-      // Cast to handle Workers AI union return type safely.
       const result = await aiBinding.run(
         model as Parameters<Ai['run']>[0],
         {
@@ -515,7 +372,6 @@ export async function callAi(
           ],
         },
       ) as { response?: string };
-
       return result.response ?? '';
     }
 
@@ -523,9 +379,7 @@ export async function callAi(
     case 'grok':
     case 'groq':
     case 'openrouter': {
-      if (!apiKey) {
-        throw new Error(`Provider "${provider}" requires an apiKey in AiConfig`);
-      }
+      if (!apiKey) throw new Error(`Provider "${provider}" requires an apiKey in AiConfig`);
       const extraHeaders = provider === 'openrouter'
         ? { 'HTTP-Referer': 'https://a3lix.com', 'X-Title': 'A3lix' }
         : {};
@@ -533,197 +387,29 @@ export async function callAi(
     }
 
     case 'claude': {
-      if (!apiKey) {
-        throw new Error(`Provider "claude" requires an apiKey in AiConfig`);
-      }
+      if (!apiKey) throw new Error(`Provider "claude" requires an apiKey in AiConfig`);
       return callClaude(apiKey, model, system, user);
     }
 
     case 'gemini': {
-      if (!apiKey) {
-        throw new Error(`Provider "gemini" requires an apiKey in AiConfig`);
-      }
+      if (!apiKey) throw new Error(`Provider "gemini" requires an apiKey in AiConfig`);
       return callGemini(apiKey, model, system, user);
     }
 
     default: {
-      // TypeScript exhaustiveness guard — should never reach here at runtime.
       const _exhaustive: never = provider;
       throw new Error(`Unknown AI provider: ${String(_exhaustive)}`);
     }
   }
 }
 
-/**
- * **Step 1 — Intent Classifier**
- *
- * Sends the user message to the AI with a strict classifier prompt.
- * Returns a structured {@link ParsedIntent} without generating any code.
- *
- * On JSON parse failure or invalid response shape, returns a safe fallback:
- * `{ type: 'unknown', confidence: 'low', affectedPaths: [], metadata: {}, requiresFileChanges: false }`
- *
- * @param message   - The raw message text from the Telegram user.
- * @param aiConfig  - Provider config (provider, model, apiKey).
- * @param aiBinding - Cloudflare `Ai` binding (used when provider is `workers-ai`).
- * @returns A classified {@link ParsedIntent}.
- */
-export async function classifyIntent(
-  message: string,
-  aiConfig: AiConfig,
-  aiBinding: Ai,
-): Promise<ParsedIntent> {
-  let rawResponse: string;
-
-  try {
-    rawResponse = await callAi(
-      { system: CLASSIFIER_SYSTEM_PROMPT, user: message },
-      aiConfig,
-      aiBinding,
-    );
-  } catch (err) {
-    console.error('[a3lix] classifyIntent: callAi threw', err);
-    return { ...FALLBACK_INTENT };
-  }
-
-  if (!rawResponse || rawResponse.trim() === '') {
-    console.error('[a3lix] classifyIntent: AI returned empty response');
-    return { ...FALLBACK_INTENT };
-  }
-
-  try {
-    const sanitised = stripFences(rawResponse);
-    const parsed: unknown = JSON.parse(sanitised);
-    if (isParsedIntent(parsed)) {
-      return parsed;
-    }
-    console.error('[a3lix] classifyIntent: parsed JSON did not match ParsedIntent schema:', sanitised.slice(0, 300));
-    return { ...FALLBACK_INTENT };
-  } catch (err) {
-    console.error('[a3lix] classifyIntent: JSON.parse failed. Raw response (first 300 chars):', rawResponse.slice(0, 300));
-    return { ...FALLBACK_INTENT };
-  }
-}
-
-/**
- * **Step 2 — Code Generator**
- *
- * Sends the original message + classified intent to the AI with a code-gen
- * prompt. Returns an array of {@link FileChange} objects representing actual
- * file mutations.
- *
- * On JSON parse failure, returns an empty array `[]`.
- * Items missing required fields (`path`, `content`, `operation`) are filtered out.
- *
- * @param message   - The original raw message text from the Telegram user.
- * @param intent    - The {@link ParsedIntent} produced by {@link classifyIntent}.
- * @param framework - The target site framework (`'astro'` or `'nextjs'`).
- * @param aiConfig  - Provider config (provider, model, apiKey).
- * @param aiBinding - Cloudflare `Ai` binding (used when provider is `workers-ai`).
- * @returns An array of validated {@link FileChange} objects.
- */
-export async function generateFileChanges(
-  message: string,
-  intent: ParsedIntent,
-  framework: 'astro' | 'nextjs',
-  aiConfig: AiConfig,
-  aiBinding: Ai,
-): Promise<FileChange[]> {
-  const systemPrompt = buildGeneratorSystemPrompt(framework);
-
-  const userPrompt =
-    `User request: ${message}\n\nClassified intent: ${JSON.stringify(intent, null, 2)}`;
-
-  let rawResponse: string;
-
-  try {
-    rawResponse = await callAi(
-      { system: systemPrompt, user: userPrompt },
-      aiConfig,
-      aiBinding,
-    );
-  } catch {
-    return [];
-  }
-
-  try {
-    const parsed: unknown = JSON.parse(stripFences(rawResponse));
-
-    if (!Array.isArray(parsed)) return [];
-
-    return parsed.filter(isFileChange);
-  } catch {
-    return [];
-  }
-}
-
 // ---------------------------------------------------------------------------
-// Summary builder
+// Main parse function — single AI call
 // ---------------------------------------------------------------------------
 
 /**
- * Builds the human-readable `summary` string shown to the user before they
- * confirm or reject a proposed change-set.
- * @internal
- */
-function buildSummary(intent: ParsedIntent, changes: FileChange[]): string {
-  switch (intent.type) {
-    case 'new_blog_post':
-      return `I'll create a new blog post: '${changes[0]?.path ?? 'new post'}'. Ready to preview?`;
-
-    case 'new_page':
-      return `I'll create a new page at ${changes[0]?.path ?? 'new page'}. Ready to preview?`;
-
-    case 'edit_text':
-    case 'edit_colors':
-    case 'edit_component':
-    case 'edit_footer':
-    case 'edit_hero':
-    case 'multi_file_edit':
-      return `I'll update ${changes.length} file(s): ${changes.map((c) => c.path).join(', ')}. Ready to preview?`;
-
-    case 'unknown':
-      return (
-        "I didn't quite understand that. Could you rephrase? " +
-        "For example: 'Add a blog post about…', 'Change the footer text to…', " +
-        "or 'Update the hero heading to…'"
-      );
-
-    case 'status_check':
-      return 'Checking the current deployment status...';
-
-    default: {
-      const _exhaustive: never = intent.type;
-      return `Processing request: ${String(_exhaustive)}`;
-    }
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Main orchestration function
-// ---------------------------------------------------------------------------
-
-/**
- * **Main entry point for the A3lix parsing pipeline.**
- *
- * Orchestrates both AI steps and returns a fully resolved {@link ParseResult}:
- *
- * 1. Calls {@link classifyIntent} → obtains a {@link ParsedIntent}.
- * 2. If `type === 'unknown'` → returns early with empty changes and a
- *    friendly clarification prompt.
- * 3. If `type === 'status_check'` → returns with empty changes and
- *    `summary: "Checking the current deployment status..."`.
- * 4. If `!requiresFileChanges` → returns with empty changes.
- * 5. If `confidence === 'low'` → proceeds to code generation but adds
- *    hardcoded clarification questions to the result.
- * 6. Calls {@link generateFileChanges} → obtains `FileChange[]`.
- * 7. Builds a human-readable `summary` and returns the full {@link ParseResult}.
- *
- * @param params.message    - The raw message text from the Telegram user.
- * @param params.framework  - The target site framework (`'astro'` or `'nextjs'`).
- * @param params.aiConfig   - Provider config (provider, model, apiKey).
- * @param params.aiBinding  - Cloudflare `Ai` binding.
- * @returns A complete {@link ParseResult} ready to hand back to the caller.
+ * Sends a single AI request that returns intent + file changes + summary
+ * in one JSON response. Replaces the previous two-step classify→generate flow.
  */
 export async function parse(params: {
   message: string;
@@ -732,63 +418,105 @@ export async function parse(params: {
   aiBinding: Ai;
 }): Promise<ParseResult> {
   const { message, framework, aiConfig, aiBinding } = params;
+  const systemPrompt = buildSystemPrompt(framework);
 
-  // ── Step 1: Classify ──────────────────────────────────────────────────────
-  const intent = await classifyIntent(message, aiConfig, aiBinding);
-
-  // ── Early exits ───────────────────────────────────────────────────────────
-
-  if (intent.type === 'unknown') {
-    return {
-      intent,
-      changes: [],
-      summary: buildSummary(intent, []),
-    };
+  let rawResponse: string;
+  try {
+    rawResponse = await callAi(
+      { system: systemPrompt, user: message },
+      aiConfig,
+      aiBinding,
+    );
+  } catch (err) {
+    console.error('[a3lix] parse: callAi threw', err);
+    return { ...FALLBACK_RESULT };
   }
 
-  if (intent.type === 'status_check') {
-    return {
-      intent,
-      changes: [],
-      summary: buildSummary(intent, []),
-    };
+  if (!rawResponse || rawResponse.trim() === '') {
+    console.error('[a3lix] parse: AI returned empty response');
+    return { ...FALLBACK_RESULT };
   }
 
-  if (!intent.requiresFileChanges) {
-    return {
-      intent,
-      changes: [],
-      summary: buildSummary(intent, []),
-    };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stripFences(rawResponse));
+  } catch (err) {
+    console.error('[a3lix] parse: JSON.parse failed. Raw (first 300):', rawResponse.slice(0, 300));
+    return { ...FALLBACK_RESULT };
   }
 
-  // ── Low-confidence: collect clarification questions (but still proceed) ───
+  if (typeof parsed !== 'object' || parsed === null) {
+    console.error('[a3lix] parse: parsed result is not an object');
+    return { ...FALLBACK_RESULT };
+  }
+
+  const p = parsed as Record<string, unknown>;
+
+  // Validate intent
+  const intentRaw = p['intent'];
+  if (!isParsedIntent(intentRaw)) {
+    console.error('[a3lix] parse: intent failed type guard:', JSON.stringify(intentRaw).slice(0, 200));
+    return { ...FALLBACK_RESULT };
+  }
+  const intent = intentRaw;
+
+  // Early exits
+  if (intent.type === 'unknown' || intent.type === 'status_check' || !intent.requiresFileChanges) {
+    const summaryRaw = p['summary'];
+    const summary = typeof summaryRaw === 'string' ? summaryRaw : FALLBACK_RESULT.summary;
+    return { intent, changes: [], summary };
+  }
+
+  // Validate changes
+  const changesRaw = p['changes'];
+  const changes: FileChange[] = Array.isArray(changesRaw)
+    ? changesRaw.filter(isFileChange)
+    : [];
+
+  if (changes.length === 0) {
+    console.error('[a3lix] parse: changes array is empty or all items failed type guard. changesRaw:', JSON.stringify(changesRaw).slice(0, 300));
+  }
+
+  // Summary
+  const summaryRaw = p['summary'];
+  const summary = typeof summaryRaw === 'string' && summaryRaw.trim() !== ''
+    ? summaryRaw
+    : `I'll update ${changes.length} file(s). Ready to preview?`;
+
+  // Clarifications for low confidence
   const clarifications: string[] | undefined =
     intent.confidence === 'low'
       ? (CLARIFICATION_QUESTIONS[intent.type] ?? undefined)
       : undefined;
 
-  // ── Step 2: Generate file changes ─────────────────────────────────────────
-  const changes = await generateFileChanges(
-    message,
-    intent,
-    framework,
-    aiConfig,
-    aiBinding,
-  );
-
-  // ── Build result ──────────────────────────────────────────────────────────
-  const summary = buildSummary(intent, changes);
-
-  const result: ParseResult = {
-    intent,
-    changes,
-    summary,
-  };
-
+  const result: ParseResult = { intent, changes, summary };
   if (clarifications !== undefined && clarifications.length > 0) {
     result.clarifications = clarifications;
   }
 
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// Legacy exports kept for backward compatibility
+// ---------------------------------------------------------------------------
+
+export async function classifyIntent(
+  message: string,
+  aiConfig: AiConfig,
+  aiBinding: Ai,
+): Promise<ParsedIntent> {
+  const result = await parse({ message, framework: 'nextjs', aiConfig, aiBinding });
+  return result.intent;
+}
+
+export async function generateFileChanges(
+  message: string,
+  intent: ParsedIntent,
+  framework: 'astro' | 'nextjs',
+  aiConfig: AiConfig,
+  aiBinding: Ai,
+): Promise<FileChange[]> {
+  const result = await parse({ message, framework, aiConfig, aiBinding });
+  return result.changes;
 }
