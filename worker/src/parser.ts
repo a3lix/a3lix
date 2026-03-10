@@ -128,7 +128,11 @@ const CLARIFICATION_QUESTIONS: Partial<Record<IntentType, string[]>> = {
 // Single-pass system prompt
 // ---------------------------------------------------------------------------
 
-function buildSystemPrompt(framework: 'astro' | 'nextjs'): string {
+function buildSystemPrompt(framework: 'astro' | 'nextjs', fileTree?: string): string {
+  const treeSection = fileTree
+    ? `\n\nRepository source files (use EXACT paths from this list — match case precisely):\n${fileTree}\n\nIMPORTANT: For files that already exist in the list above, use operation:"update". Use operation:"create" only for genuinely new files.`
+    : '';
+
   return `You are A3lix, an AI agent that helps non-technical clients update their ${framework} website by text message.
 
 Analyse the user's message and respond with ONLY valid JSON — no markdown, no explanation, no code fences:
@@ -154,11 +158,10 @@ Rules:
 - status_check: user asks what is currently deployed → set requiresFileChanges:false, changes:[], summary describes status
 - unknown: cannot classify → set requiresFileChanges:false, changes:[], summary asks user to rephrase
 - For any edit/create intent: populate changes with the COMPLETE new file content (never partial)
-- Framework: ${framework}. Use correct file conventions:${framework === 'astro' ? '\n  - Pages: src/pages/*.astro\n  - Content: src/content/**/*.md or src/content/**/*.json\n  - Components: src/components/*.astro' : '\n  - Pages: app/**/page.tsx or pages/**/*.tsx\n  - Components: components/**/*.tsx\n  - Styles: styles/**/*.css or app/globals.css'}
-- Only use paths within: app, src/app, components, src/components, public, styles, src/styles, lib, src/lib, src/content, src/pages, tailwind.config.*
+- Framework: ${framework}
 - Generate clean, production-quality code
 - NEVER include process.env, eval, require('child_process'), .env references, or secrets
-- Return ONLY the JSON object, starting with { and ending with }`;
+- Return ONLY the JSON object, starting with { and ending with }${treeSection}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -416,9 +419,10 @@ export async function parse(params: {
   framework: 'astro' | 'nextjs';
   aiConfig: AiConfig;
   aiBinding: Ai;
+  fileTree?: string;
 }): Promise<ParseResult> {
-  const { message, framework, aiConfig, aiBinding } = params;
-  const systemPrompt = buildSystemPrompt(framework);
+  const { message, framework, aiConfig, aiBinding, fileTree } = params;
+  const systemPrompt = buildSystemPrompt(framework, fileTree);
 
   let rawResponse: string;
   try {

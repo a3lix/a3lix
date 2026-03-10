@@ -398,12 +398,39 @@ async function handleChangeRequest(
       aiConfig.apiKey = env.AI_API_KEY;
     }
 
-    // ── 2. Parse ─────────────────────────────────────────────────────────────
+    // ── 2. Fetch repo file tree for accurate path targeting ───────────────────
+    let fileTree: string | undefined;
+    try {
+      const repoParts = config.project.repo.split('/');
+      const treeUrl = `https://api.github.com/repos/${config.project.repo}/git/trees/${config.project.branch}?recursive=1`;
+      const treeResp = await fetch(treeUrl, {
+        headers: {
+          'Authorization': `Bearer ${env.GITHUB_TOKEN}`,
+          'Accept': 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+          'User-Agent': 'A3lix-Bot/0.1',
+        },
+      });
+      if (treeResp.ok) {
+        const treeData = await treeResp.json() as { tree?: Array<{ path: string; type: string }> };
+        const allowedExts = /\.(tsx?|jsx?|astro|mdx?|json|css|html)$/;
+        const files = (treeData.tree ?? [])
+          .filter(f => f.type === 'blob' && allowedExts.test(f.path) && !f.path.includes('node_modules') && !f.path.includes('.next') && !f.path.startsWith('.'))
+          .map(f => f.path)
+          .slice(0, 80); // cap at 80 files to keep prompt short
+        fileTree = files.join('\n');
+      }
+    } catch {
+      // Non-fatal — proceed without file tree
+    }
+
+    // ── 3. Parse ─────────────────────────────────────────────────────────────
     const parseResult: ParseResult = await parse({
       message: text,
       framework: config.project.framework,
       aiConfig,
       aiBinding: env.AI,
+      ...(fileTree !== undefined ? { fileTree } : {}),
     });
 
     const { intent, changes, summary, clarifications } = parseResult;
