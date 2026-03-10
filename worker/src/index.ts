@@ -27,22 +27,16 @@ import {
   checkAllowedPaths,
   checkDestructiveKeywords,
   checkOperationAllowed,
-  runAllGuardrails,
   auditLog,
   type FileChange,
-  type GuardrailConfig,
 } from './guardrails';
 
 import {
   getUserRole,
-  checkAccess,
-  canApproveChange,
   initiateAccessRequest,
   generateOtp,
   validateOtp,
   completeOnboarding,
-  bootstrapOwner,
-  type Role,
 } from './roles';
 
 import {
@@ -55,7 +49,6 @@ import {
   type GitHubConfig,
   type GitHubFileChange,
   storePendingApproval,
-  getPendingApproval,
   deletePendingApproval,
   listPendingApprovals,
   type PendingApproval,
@@ -81,12 +74,10 @@ import {
   replyPreviewReady,
   replyApprovalPending,
   replyMerged,
-  replyCancelled,
   replyNoPendingApproval,
   replyViewerCannotEdit,
   replyRateLimited,
   replyGuardrailBlocked,
-  replyPathBlocked,
   replyInternalError,
   replyGitHubError,
   replyStatusCheck,
@@ -319,6 +310,28 @@ function verifyTelegramWebhook(request: Request, secretToken: string): boolean {
   return mismatch === 0;
 }
 
+/**
+ * Deduplicates Telegram webhook deliveries by `update_id`.
+ *
+ * Telegram can retry the same update if the webhook ack is delayed; without
+ * this KV marker, one user message can trigger multiple preview deployments.
+ *
+ * @param updateId - Telegram `update_id`.
+ * @param kv       - KV namespace used for idempotency markers.
+ * @returns `true` when this update should be processed, `false` when duplicate.
+ */
+async function claimTelegramUpdate(
+  updateId: number,
+  kv: KVNamespace,
+): Promise<boolean> {
+  const key = `telegram:update:${updateId}`;
+  const existing = await kv.get(key);
+  if (existing !== null) return false;
+
+  await kv.put(key, '1', { expirationTtl: 600 });
+  return true;
+}
+
 // ---------------------------------------------------------------------------
 // GitHub config helper
 // ---------------------------------------------------------------------------
@@ -490,23 +503,12 @@ async function handleChangeRequest(
       return;
     }
 
-    // ── 5. Run all guardrails ─────────────────────────────────────────────────
-    const guardrailConfig: GuardrailConfig = {
-      allowedPaths: config.paths.allowed,
-      changesPerUserPerDay: config.limits.changesPerUserPerDay,
-    };
-
-    const guardrailResult = await runAllGuardrails({
-      changes: fileChanges,
-      userId,
-      kv: env.A3LIX_KV,
-      config: guardrailConfig,
-    });
-
-    if (!guardrailResult.allowed) {
+    // ── 5. Run non-rate guardrails (rate limit is already enforced in routeMessage) ──
+    const pathResult = checkAllowedPaths(fileChanges, config.paths.allowed);
+    if (!pathResult.allowed) {
       await sendTelegramMessage({
         chatId,
-        text: replyGuardrailBlocked(guardrailResult.reason ?? 'unknown'),
+        text: replyGuardrailBlocked(pathResult.reason ?? 'unknown'),
         botToken: env.TELEGRAM_BOT_TOKEN,
       });
 
@@ -515,7 +517,45 @@ async function handleChangeRequest(
           action: 'change_request',
           paths: fileChanges.map((c) => c.path),
           outcome: 'blocked',
-          ...(guardrailResult.reason !== undefined ? { reason: guardrailResult.reason } : {}),
+          ...(pathResult.reason !== undefined ? { reason: pathResult.reason } : {}),
+          kv: env.A3LIX_KV,
+        });
+      return;
+    }
+
+    const keywordResult = checkDestructiveKeywords(fileChanges);
+    if (!keywordResult.allowed) {
+      await sendTelegramMessage({
+        chatId,
+        text: replyGuardrailBlocked(keywordResult.reason ?? 'unknown'),
+        botToken: env.TELEGRAM_BOT_TOKEN,
+      });
+
+      await auditLog({
+          userId,
+          action: 'change_request',
+          paths: fileChanges.map((c) => c.path),
+          outcome: 'blocked',
+          ...(keywordResult.reason !== undefined ? { reason: keywordResult.reason } : {}),
+          kv: env.A3LIX_KV,
+        });
+      return;
+    }
+
+    const opResult = checkOperationAllowed(fileChanges);
+    if (!opResult.allowed) {
+      await sendTelegramMessage({
+        chatId,
+        text: replyGuardrailBlocked(opResult.reason ?? 'unknown'),
+        botToken: env.TELEGRAM_BOT_TOKEN,
+      });
+
+      await auditLog({
+          userId,
+          action: 'change_request',
+          paths: fileChanges.map((c) => c.path),
+          outcome: 'blocked',
+          ...(opResult.reason !== undefined ? { reason: opResult.reason } : {}),
           kv: env.A3LIX_KV,
         });
       return;
@@ -655,7 +695,6 @@ async function handleChangeRequest(
  * @param displayName - Telegram username or first name.
  * @param config      - The loaded {@link AgentConfig}.
  * @param env         - Worker {@link Env} bindings.
- * @param ctx         - Worker execution context (for `waitUntil`).
  */
 async function routeMessage(
   text: string,
@@ -664,7 +703,6 @@ async function routeMessage(
   displayName: string | undefined,
   config: AgentConfig,
   env: Env,
-  ctx: ExecutionContext,
 ): Promise<void> {
   // ── 1. Determine user role ────────────────────────────────────────────────
   const role = await getUserRole(userId, env.A3LIX_KV);
@@ -1093,7 +1131,15 @@ async function handleTelegramWebhook(
   const text = message.text?.trim() ?? '';
   const displayName = message.from.username ?? message.from.first_name;
 
-  // ── 5. Load config ────────────────────────────────────────────────────────
+  // ── 5. Idempotency guard (Telegram retries can deliver the same update) ──
+  if (typeof update.update_id === 'number') {
+    const shouldProcess = await claimTelegramUpdate(update.update_id, env.A3LIX_KV);
+    if (!shouldProcess) {
+      return new Response('OK', { status: 200 });
+    }
+  }
+
+  // ── 6. Load config ────────────────────────────────────────────────────────
   let config: AgentConfig;
   try {
     config = await loadConfig(env.A3LIX_KV);
@@ -1106,13 +1152,14 @@ async function handleTelegramWebhook(
     return new Response('OK', { status: 200 });
   }
 
-  // ── 6. Route message (fire-and-forget for heavy work) ────────────────────
-  // routeMessage itself sends replyParsing + calls ctx.waitUntil internally.
-  // We call it here; any await inside it that isn't within waitUntil resolves
-  // before we return 200.
-  await routeMessage(text, userId, chatId, displayName, config, env, ctx);
+  // ── 7. Route message asynchronously and ACK Telegram immediately ──────────
+  ctx.waitUntil(
+    routeMessage(text, userId, chatId, displayName, config, env).catch((error: unknown) => {
+      console.error('[a3lix] routeMessage failed:', error);
+    }),
+  );
 
-  // ── 7. Always return 200 to Telegram ─────────────────────────────────────
+  // ── 8. Always return 200 to Telegram quickly (prevents retries/duplicates) ─
   return new Response('OK', { status: 200 });
 }
 
