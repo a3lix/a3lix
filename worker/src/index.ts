@@ -447,14 +447,23 @@ async function handleChangeRequest(
       return;
     }
 
-    // ── 4. Map ParseResult.changes → FileChange[] ────────────────────────────
-    // parser.ts FileChange.operation is 'create' | 'update' (no 'delete').
-    // guardrails.ts FileChange.operation adds 'delete'. Cast safely.
-    const fileChanges: FileChange[] = changes.map((c) => ({
-      path: c.path,
-      content: c.content,
-      operation: c.operation as 'create' | 'update' | 'delete',
-    }));
+    // ── 4. Map ParseResult.changes → FileChange[], resolving find/replace ──────
+    // When the AI returns find/replace instead of full content (for surgical edits),
+    // apply the replacement against the preloaded file content.
+    const fileChanges: FileChange[] = changes.map((c) => {
+      let resolvedContent = c.content;
+      if (c.find !== undefined && c.replace !== undefined && c.find !== '') {
+        const existingContent = preloadedFileContents?.[c.path];
+        if (existingContent) {
+          resolvedContent = existingContent.replace(c.find, c.replace);
+        }
+      }
+      return {
+        path: c.path,
+        content: resolvedContent,
+        operation: c.operation as 'create' | 'update' | 'delete',
+      };
+    });
 
     // Guard: AI returned no file changes — ask user to rephrase.
     if (fileChanges.length === 0) {

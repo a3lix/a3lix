@@ -71,11 +71,18 @@ export interface ParsedIntent {
 
 /**
  * A single file change produced by the AI.
+ * For updates to existing files, use `find`/`replace` instead of full `content`
+ * to avoid JSON encoding issues with large files.
  */
 export interface FileChange {
   path: string;
+  /** Full file content — used for new files (operation: 'create') */
   content: string;
   operation: 'create' | 'update';
+  /** For updates: exact string to find in the existing file */
+  find?: string;
+  /** For updates: string to replace the found text with */
+  replace?: string;
 }
 
 /**
@@ -137,12 +144,37 @@ function buildSystemPrompt(
     ? `\n\nRepository source files (use EXACT paths — match case precisely):\n${fileTree}\n\nIMPORTANT: For files that already exist in the list above, use operation:"update". Use operation:"create" only for genuinely new files.`
     : '';
 
-  const contentSection = fileContents && Object.keys(fileContents).length > 0
-    ? '\n\nCurrent file contents (make ONLY the minimal change requested — preserve ALL other code, imports, animations, styling, components exactly as-is):\n' +
-      Object.entries(fileContents)
-        .map(([path, content]) => `\n--- ${path} ---\n${content}\n--- end ${path} ---`)
+  const hasFileContents = fileContents && Object.keys(fileContents).length > 0;
+
+  const contentSection = hasFileContents
+    ? '\n\nCurrent file contents provided for surgical editing:\n' +
+      Object.entries(fileContents!)
+        .map(([path, content]) => `\n--- ${path} (${content.split('\n').length} lines) ---\n${content.slice(0, 4000)}${content.length > 4000 ? '\n...(truncated)' : ''}\n--- end ${path} ---`)
         .join('\n')
     : '';
+
+  const changesSchema = hasFileContents
+    ? `[
+    {
+      "path": "exact/path/from/file/tree",
+      "operation": "update",
+      "find": "exact string to find in the file (copy verbatim from the file content above)",
+      "replace": "new string to replace it with",
+      "content": ""
+    }
+  ]`
+    : `[
+    {
+      "path": "repo-relative/path/to/file",
+      "content": "complete file content as a string",
+      "operation": "create"|"update"
+    }
+  ]`;
+
+  const changesInstructions = hasFileContents
+    ? `- CRITICAL: Use "find"/"replace" for edits to existing files. The "find" value must exactly match text in the current file (character for character). The "replace" value is what replaces it. Set "content" to empty string "".
+- Only make the MINIMAL change — do not rewrite, restructure, or expand the file.`
+    : `- For any edit/create intent: populate "content" with the COMPLETE new file content.`;
 
   return `You are A3lix, an AI agent that helps non-technical clients update their ${framework} website by text message.
 
@@ -155,23 +187,15 @@ Analyse the user's message and respond with ONLY valid JSON — no markdown, no 
     "metadata": {key-value strings extracted from the message, e.g. title, color, text},
     "requiresFileChanges": true|false
   },
-  "changes": [
-    {
-      "path": "repo-relative/path/to/file",
-      "content": "complete file content as a string",
-      "operation": "create"|"update"
-    }
-  ],
+  "changes": ${changesSchema},
   "summary": "Human-readable one-line description of what will be changed"
 }
 
 Rules:
 - status_check: user asks what is currently deployed → set requiresFileChanges:false, changes:[], summary describes status
 - unknown: cannot classify → set requiresFileChanges:false, changes:[], summary asks user to rephrase
-- CRITICAL: When current file contents are provided, make ONLY the minimal surgical change requested. Copy everything else EXACTLY — preserve all imports, animations, styling, event handlers, props, and structure unchanged.
-- For any edit/create intent: populate changes with the COMPLETE file content (never partial)
+${changesInstructions}
 - Framework: ${framework}
-- Generate clean, production-quality code
 - NEVER include process.env, eval, require('child_process'), .env references, or secrets
 - Return ONLY the JSON object, starting with { and ending with }${treeSection}${contentSection}`;
 }
