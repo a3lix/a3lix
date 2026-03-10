@@ -749,7 +749,18 @@ async function routeMessage(
           config.project.branch,
         );
 
-        // Delete BEFORE merging to prevent duplicate processing on fast double-YES.
+        // Atomic lock: try to claim this merge by writing a lock key.
+        // If the key already exists (another YES is processing), skip silently.
+        const lockKey = `merge-lock:${approval.branchName}`;
+        const existingLock = await env.A3LIX_KV.get(lockKey);
+        if (existingLock !== null) {
+          // Already being processed — ignore this duplicate YES.
+          return;
+        }
+        // Claim the lock (expires in 60 seconds as safety net).
+        await env.A3LIX_KV.put(lockKey, '1', { expirationTtl: 60 });
+
+        // Now delete the pending approval and proceed.
         await deletePendingApproval(approval.branchName, env.A3LIX_KV);
 
         const mergeResult = await approveAndMerge({

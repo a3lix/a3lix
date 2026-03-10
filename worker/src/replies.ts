@@ -145,22 +145,28 @@ export function replyDiffPreview(params: {
   );
 }
 
-export function replyApprovalPending(summary: string): string {
+export function replyApprovalPending(previewUrl: string): string {
   return (
-    `⏳ A change is waiting for your approval:\n\n${esc(summary)}\n\n` +
-    `Reply <b>YES</b> to approve and deploy, or <b>NO</b> to reject.`
+    `⏳ A change is waiting for your approval.\n\n` +
+    `<a href="${previewUrl}">View preview</a>\n\n` +
+    `Reply <b>YES</b> to approve and go live, or <b>NO</b> to reject.`
   );
 }
 
-/** @deprecated Use replyDiffPreview instead */
 export function replyPreviewReady(params: {
   summary: string;
   previewUrl: string;
   estimatedSeconds: number;
   branchName: string;
 }): string {
-  const { summary } = params;
-  return replyDiffPreview({ summary, changes: [], pendingId: '' });
+  const { summary, previewUrl, estimatedSeconds, branchName } = params;
+  return (
+    `🚀 <b>Preview Ready!</b>\n\n` +
+    `📝 ${esc(summary)}\n\n` +
+    `🔗 <a href="${previewUrl}">Open preview</a> — takes ~${estimatedSeconds}s to build\n\n` +
+    `🌿 Branch: <code>${esc(branchName)}</code>\n\n` +
+    `✅ Reply <b>YES</b> to go live\n❌ Reply <b>NO</b> to cancel`
+  );
 }
 
 export function replyMerged(params: { summary: string; commitSha: string }): string {
