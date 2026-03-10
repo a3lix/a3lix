@@ -722,58 +722,56 @@ async function routeMessage(
         return;
       }
 
-      // Do the heavy work asynchronously.
-      ctx.waitUntil((async () => {
-        try {
-          const githubConfig = buildGitHubConfig(
-            env.GITHUB_TOKEN,
-            config.project.repo,
-            config.project.branch,
-          );
+      // Do the heavy work synchronously (no waitUntil — avoids 30s limit).
+      try {
+        const githubConfig = buildGitHubConfig(
+          env.GITHUB_TOKEN,
+          config.project.repo,
+          config.project.branch,
+        );
 
-          const mergeResult = await approveAndMerge({
-            githubConfig,
-            branchName: approval.branchName,
-            summary: approval.summary,
-            userId,
-          });
+        const mergeResult = await approveAndMerge({
+          githubConfig,
+          branchName: approval.branchName,
+          summary: approval.summary,
+          userId,
+        });
 
-          await deletePendingApproval(approval.branchName, env.A3LIX_KV);
+        await deletePendingApproval(approval.branchName, env.A3LIX_KV);
 
-          const mergedText = replyMerged({
-            summary: approval.summary,
-            commitSha: mergeResult.commitSha,
-          });
+        const mergedText = replyMerged({
+          summary: approval.summary,
+          commitSha: mergeResult.commitSha,
+        });
 
-          // Notify the editor who requested the change.
-          await sendTelegramMessage({
-            chatId: approval.requestedByUserId,
-            text: mergedText,
-            botToken: env.TELEGRAM_BOT_TOKEN,
-          }).catch(() => undefined);
+        // Notify the editor who requested the change.
+        await sendTelegramMessage({
+          chatId: approval.requestedByUserId,
+          text: mergedText,
+          botToken: env.TELEGRAM_BOT_TOKEN,
+        }).catch(() => undefined);
 
-          // Confirm to the owner too.
+        // Confirm to the owner too.
+        await sendTelegramMessage({
+          chatId,
+          text: mergedText,
+          botToken: env.TELEGRAM_BOT_TOKEN,
+        }).catch(() => undefined);
+      } catch (error: unknown) {
+        if (error instanceof GitHubError) {
           await sendTelegramMessage({
             chatId,
-            text: mergedText,
+            text: replyGitHubError(error.endpoint),
             botToken: env.TELEGRAM_BOT_TOKEN,
           }).catch(() => undefined);
-        } catch (error: unknown) {
-          if (error instanceof GitHubError) {
-            await sendTelegramMessage({
-              chatId,
-              text: replyGitHubError(error.endpoint),
-              botToken: env.TELEGRAM_BOT_TOKEN,
-            }).catch(() => undefined);
-          } else {
-            await sendTelegramMessage({
-              chatId,
-              text: replyInternalError(),
-              botToken: env.TELEGRAM_BOT_TOKEN,
-            }).catch(() => undefined);
-          }
+        } else {
+          await sendTelegramMessage({
+            chatId,
+            text: replyInternalError(),
+            botToken: env.TELEGRAM_BOT_TOKEN,
+          }).catch(() => undefined);
         }
-      })());
+      }
 
       return;
     }
@@ -833,25 +831,22 @@ async function routeMessage(
 
       const requesterUserId = accessRequest.userId;
 
-      // Generate OTP and send to the requester.
-      // In Telegram private chats, userId === chatId.
-      ctx.waitUntil((async () => {
-        try {
-          const otpRequest = await generateOtp(requesterUserId, env.A3LIX_KV);
+      // Generate OTP and send to the requester synchronously.
+      try {
+        const otpRequest = await generateOtp(requesterUserId, env.A3LIX_KV);
 
-          await sendTelegramMessage({
-            chatId: requesterUserId,
-            text: replyOtpIssued(otpRequest.otp),
-            botToken: env.TELEGRAM_BOT_TOKEN,
-          });
-        } catch (error: unknown) {
-          await sendTelegramMessage({
-            chatId,
-            text: replyInternalError(),
-            botToken: env.TELEGRAM_BOT_TOKEN,
-          }).catch(() => undefined);
-        }
-      })());
+        await sendTelegramMessage({
+          chatId: requesterUserId,
+          text: replyOtpIssued(otpRequest.otp),
+          botToken: env.TELEGRAM_BOT_TOKEN,
+        });
+      } catch (error: unknown) {
+        await sendTelegramMessage({
+          chatId,
+          text: replyInternalError(),
+          botToken: env.TELEGRAM_BOT_TOKEN,
+        }).catch(() => undefined);
+      }
 
       return;
     }
@@ -992,16 +987,16 @@ async function routeMessage(
     }
   } catch { /* non-fatal */ }
 
-  // Acknowledge immediately — AI + GitHub work runs in the background.
+  // Acknowledge — then do all work synchronously (no waitUntil — avoids 30s limit).
+  // The HTTP 200 to Telegram is returned after handleChangeRequest completes.
+  // Telegram waits up to 60 seconds, and the work is 100% I/O-bound (no CPU limit applies).
   await sendTelegramMessage({
     chatId,
     text: replyParsing(),
     botToken: env.TELEGRAM_BOT_TOKEN,
   }).catch(() => undefined);
 
-  ctx.waitUntil(
-    handleChangeRequest(text, userId, chatId, displayName, config, env, preloadedFileTree, preloadedFileContents),
-  );
+  await handleChangeRequest(text, userId, chatId, displayName, config, env, preloadedFileTree, preloadedFileContents);
 }
 
 // ---------------------------------------------------------------------------
