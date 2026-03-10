@@ -79,6 +79,12 @@ export interface DeployResult {
    * Derived from `DeployConfig.framework`: Astro = 45 s, Next.js = 60 s.
    */
   estimatedBuildSeconds: number;
+
+  /**
+   * Whether the preview URL was confirmed reachable before returning.
+   * `false` means the branch was pushed successfully but readiness polling timed out.
+   */
+  previewReady: boolean;
 }
 
 interface PagesDeployment {
@@ -306,31 +312,44 @@ export async function deployPreview(params: {
     pagesProjectName: deployConfig.pagesProjectName,
   });
 
-  const timeoutMs = deployConfig.framework === 'astro' ? 4 * 60_000 : 5 * 60_000;
+  // Keep readiness probe short so Telegram webhook handling can complete
+  // quickly. If the preview isn't reachable yet, we still return the
+  // deterministic preview URL immediately.
+  const timeoutMs = 20_000;
   const intervalMs = 5_000;
+  const estimatedBuildSeconds = deployConfig.framework === 'astro' ? 45 : 60;
 
-  const previewUrl =
-    env?.CF_ACCOUNT_ID && env?.CF_API_TOKEN
-      ? await waitForPreviewByPagesApi({
-          accountId: env.CF_ACCOUNT_ID,
-          apiToken: env.CF_API_TOKEN,
-          pagesProjectName: deployConfig.pagesProjectName,
-          branchName: result.branchName,
-          timeoutMs,
-          intervalMs,
-        })
-      : await waitForPreviewByUrl({
-          previewUrl: result.previewUrl,
-          timeoutMs,
-          intervalMs,
-        });
+  let previewUrl = result.previewUrl;
+  let previewReady = false;
+
+  try {
+    previewUrl =
+      env?.CF_ACCOUNT_ID && env?.CF_API_TOKEN
+        ? await waitForPreviewByPagesApi({
+            accountId: env.CF_ACCOUNT_ID,
+            apiToken: env.CF_API_TOKEN,
+            pagesProjectName: deployConfig.pagesProjectName,
+            branchName: result.branchName,
+            timeoutMs,
+            intervalMs,
+          })
+        : await waitForPreviewByUrl({
+            previewUrl: result.previewUrl,
+            timeoutMs,
+            intervalMs,
+          });
+    previewReady = true;
+  } catch (error) {
+    console.error('[a3lix] deployPreview readiness check failed, falling back to deterministic preview URL:', error);
+  }
 
   return {
     branchName: result.branchName,
     previewUrl,
     commitSha: result.commitSha,
     deployedAt: new Date().toISOString(),
-    estimatedBuildSeconds: 0,
+    estimatedBuildSeconds,
+    previewReady,
   };
 }
 
