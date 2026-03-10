@@ -447,17 +447,27 @@ async function handleChangeRequest(
       return;
     }
 
-    // ── 4. Map ParseResult.changes → FileChange[], resolving find/replace ──────
-    // When the AI returns find/replace instead of full content (for surgical edits),
-    // apply the replacement against the preloaded file content.
+    // ── 4. Map ParseResult.changes → FileChange[], applying line changes ─────────
+    // When the AI returns lineChanges (for surgical edits to existing files),
+    // apply them against the preloaded file content to produce the final content.
     const fileChanges: FileChange[] = changes.map((c) => {
-      let resolvedContent = c.content;
-      if (c.find !== undefined && c.replace !== undefined && c.find !== '') {
+      let resolvedContent = c.content ?? '';
+
+      if (c.lineChanges && c.lineChanges.length > 0) {
         const existingContent = preloadedFileContents?.[c.path];
         if (existingContent) {
-          resolvedContent = existingContent.replace(c.find, c.replace);
+          // Apply line changes in reverse order (so line numbers stay valid)
+          const lines = existingContent.split('\n');
+          const sorted = [...c.lineChanges].sort((a, b) => b.startLine - a.startLine);
+          for (const lc of sorted) {
+            const start = Math.max(0, lc.startLine - 1); // 0-indexed
+            const end = Math.min(lines.length, lc.endLine); // exclusive end
+            lines.splice(start, end - start, ...lc.newLines);
+          }
+          resolvedContent = lines.join('\n');
         }
       }
+
       return {
         path: c.path,
         content: resolvedContent,
@@ -739,14 +749,15 @@ async function routeMessage(
           config.project.branch,
         );
 
+        // Delete BEFORE merging to prevent duplicate processing on fast double-YES.
+        await deletePendingApproval(approval.branchName, env.A3LIX_KV);
+
         const mergeResult = await approveAndMerge({
           githubConfig,
           branchName: approval.branchName,
           summary: approval.summary,
           userId,
         });
-
-        await deletePendingApproval(approval.branchName, env.A3LIX_KV);
 
         const mergedText = replyMerged({
           summary: approval.summary,

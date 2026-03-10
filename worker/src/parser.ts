@@ -70,19 +70,29 @@ export interface ParsedIntent {
 }
 
 /**
+ * A single line change within a file update.
+ */
+export interface LineChange {
+  /** 1-indexed start line to replace (inclusive) */
+  startLine: number;
+  /** 1-indexed end line to replace (inclusive) */
+  endLine: number;
+  /** New lines to insert (empty array = delete the range) */
+  newLines: string[];
+}
+
+/**
  * A single file change produced by the AI.
- * For updates to existing files, use `find`/`replace` instead of full `content`
- * to avoid JSON encoding issues with large files.
+ * For new files: use `content`.
+ * For edits to existing files: use `lineChanges` (precise line-level edits).
  */
 export interface FileChange {
   path: string;
-  /** Full file content — used for new files (operation: 'create') */
-  content: string;
   operation: 'create' | 'update';
-  /** For updates: exact string to find in the existing file */
-  find?: string;
-  /** For updates: string to replace the found text with */
-  replace?: string;
+  /** For operation:'create' — full file content */
+  content: string;
+  /** For operation:'update' — array of line-level replacements */
+  lineChanges?: LineChange[];
 }
 
 /**
@@ -147,9 +157,14 @@ function buildSystemPrompt(
   const hasFileContents = fileContents && Object.keys(fileContents).length > 0;
 
   const contentSection = hasFileContents
-    ? '\n\nCurrent file contents provided for surgical editing:\n' +
+    ? '\n\nCurrent file contents with LINE NUMBERS (use these exact numbers in lineChanges):\n' +
       Object.entries(fileContents!)
-        .map(([path, content]) => `\n--- ${path} (${content.split('\n').length} lines) ---\n${content.slice(0, 4000)}${content.length > 4000 ? '\n...(truncated)' : ''}\n--- end ${path} ---`)
+        .map(([path, content]) => {
+          const lines = content.split('\n');
+          const numbered = lines.slice(0, 180).map((l, i) => `${String(i + 1).padStart(4, ' ')} | ${l}`).join('\n');
+          const truncated = lines.length > 180 ? `\n... (${lines.length - 180} more lines)` : '';
+          return `\n--- ${path} ---\n${numbered}${truncated}\n--- end ${path} ---`;
+        })
         .join('\n')
     : '';
 
@@ -158,23 +173,31 @@ function buildSystemPrompt(
     {
       "path": "exact/path/from/file/tree",
       "operation": "update",
-      "find": "exact string to find in the file (copy verbatim from the file content above)",
-      "replace": "new string to replace it with",
-      "content": ""
+      "content": "",
+      "lineChanges": [
+        {
+          "startLine": <1-indexed line number>,
+          "endLine": <1-indexed line number>,
+          "newLines": ["replacement line 1", "replacement line 2"]
+        }
+      ]
     }
   ]`
     : `[
     {
       "path": "repo-relative/path/to/file",
       "content": "complete file content as a string",
-      "operation": "create"|"update"
+      "operation": "create"
     }
   ]`;
 
   const changesInstructions = hasFileContents
-    ? `- CRITICAL: Use "find"/"replace" for edits to existing files. The "find" value must exactly match text in the current file (character for character). The "replace" value is what replaces it. Set "content" to empty string "".
-- Only make the MINIMAL change — do not rewrite, restructure, or expand the file.`
-    : `- For any edit/create intent: populate "content" with the COMPLETE new file content.`;
+    ? `- CRITICAL: Use "lineChanges" to specify EXACTLY which lines to replace. Line numbers are 1-indexed as shown in the file contents above.
+- "startLine" and "endLine" are the line numbers of the text you want to replace.
+- "newLines" is the array of NEW lines to put there (can be more or fewer lines than original).
+- Set "content" to empty string "" when using lineChanges.
+- You MUST use the line numbers visible in the file contents - count them carefully.`
+    : `- For new files: populate "content" with the COMPLETE new file content.`;
 
   return `You are A3lix, an AI agent that helps non-technical clients update their ${framework} website by text message.
 
@@ -264,8 +287,11 @@ function isFileChange(value: unknown): value is FileChange {
   if (typeof value !== 'object' || value === null) return false;
   const v = value as Record<string, unknown>;
   if (typeof v['path'] !== 'string' || v['path'].trim() === '') return false;
-  if (typeof v['content'] !== 'string') return false;
   if (v['operation'] !== 'create' && v['operation'] !== 'update') return false;
+  // Either content (for create) or lineChanges (for update) must be present
+  const hasContent = typeof v['content'] === 'string';
+  const hasLineChanges = Array.isArray(v['lineChanges']) && v['lineChanges'].length > 0;
+  if (!hasContent && !hasLineChanges) return false;
   return true;
 }
 
