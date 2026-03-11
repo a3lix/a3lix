@@ -83,10 +83,18 @@ export interface PreviewBranchResult {
   /** The SHA of the commit that was pushed to the preview branch. */
   commitSha: string;
   /**
-   * The Cloudflare Pages preview URL derived from the branch name.
-   * Pattern: `https://{slugifiedBranch}.{pagesProjectName}.pages.dev`
+   * The Cloudflare Pages preview URL derived from the created commit SHA.
+   * Pattern: `https://{commitSha8}.{pagesProjectName}.pages.dev/`
    */
   previewUrl: string;
+}
+
+/**
+ * Result of committing changes directly to the configured base branch.
+ */
+export interface LiveCommitResult {
+  /** The SHA of the commit pushed to the base branch. */
+  commitSha: string;
 }
 
 /**
@@ -279,7 +287,7 @@ async function githubFetch(
  * @returns A Cloudflare Pages–compatible URL slug.
  * @internal
  */
-function slugifyBranch(branchName: string): string {
+function _slugifyBranch(branchName: string): string {
   return branchName
     .toLowerCase()
     .replace(/[^a-z0-9-]/g, '-')
@@ -476,14 +484,119 @@ export async function createPreviewBranch(params: {
   });
 
   // ── Build Cloudflare Pages preview URL ────────────────────────────────────
-  const slug = slugifyBranch(branchName);
-  const previewUrl = `https://${slug}.${pagesProjectName}.pages.dev`;
+  // Cloudflare Pages preview links for this setup resolve by short deployment
+  // hash (8 chars), which matches the commit SHA prefix in practice.
+  const deploymentHash = newCommitSha.slice(0, 8);
+  const previewUrl = `https://${deploymentHash}.${pagesProjectName}.pages.dev/`;
 
   return {
     branchName,
     commitSha: newCommitSha,
     previewUrl,
   };
+}
+
+/**
+ * Commits changes directly to the configured base branch (`main` in most setups).
+ *
+ * Flow:
+ * 1. Read current base branch SHA
+ * 2. Read base commit tree SHA
+ * 3. Create a new tree with all requested file changes
+ * 4. Create a commit pointing to that tree
+ * 5. Fast-forward the base branch ref to the new commit
+ */
+export async function createLiveCommit(params: {
+  config: GitHubConfig;
+  changes: GitHubFileChange[];
+  commitMessage: string;
+}): Promise<LiveCommitResult> {
+  const { config, changes, commitMessage } = params;
+  const { owner, repo, token, baseBranch } = config;
+
+  // 1) Base SHA
+  const baseSha = await getBaseBranchSha(config);
+
+  // 2) Base tree SHA
+  const commitEndpoint = `/repos/${owner}/${repo}/git/commits/${baseSha}`;
+  const commitData = await githubFetch(commitEndpoint, token);
+
+  if (!isGitHubCommitResponse(commitData)) {
+    throw new GitHubError(
+      `Unexpected response shape from GET ${commitEndpoint}`,
+      200,
+      commitEndpoint,
+    );
+  }
+
+  const treeSha = commitData.tree.sha;
+
+  // 3) New tree
+  const treeEndpoint = `/repos/${owner}/${repo}/git/trees`;
+  const treeData = await githubFetch(treeEndpoint, token, {
+    method: 'POST',
+    body: {
+      base_tree: treeSha,
+      tree: changes.map((change) => ({
+        path: change.path,
+        mode: '100644',
+        type: 'blob',
+        content: change.content,
+      })),
+    },
+  });
+
+  if (!isGitHubTreeResponse(treeData)) {
+    throw new GitHubError(
+      `Unexpected response shape from POST ${treeEndpoint}`,
+      201,
+      treeEndpoint,
+    );
+  }
+
+  // 4) Commit
+  const createCommitEndpoint = `/repos/${owner}/${repo}/git/commits`;
+  const now = new Date().toISOString();
+  const createCommitData = await githubFetch(createCommitEndpoint, token, {
+    method: 'POST',
+    body: {
+      message: commitMessage,
+      tree: treeData.sha,
+      parents: [baseSha],
+      author: {
+        name: BOT_AUTHOR.name,
+        email: BOT_AUTHOR.email,
+        date: now,
+      },
+      committer: {
+        name: BOT_AUTHOR.name,
+        email: BOT_AUTHOR.email,
+        date: now,
+      },
+    },
+  });
+
+  if (!isGitHubCreateCommitResponse(createCommitData)) {
+    throw new GitHubError(
+      `Unexpected response shape from POST ${createCommitEndpoint}`,
+      201,
+      createCommitEndpoint,
+    );
+  }
+
+  const newCommitSha = createCommitData.sha;
+
+  // 5) Fast-forward base branch
+  const updateRefEndpoint = `/repos/${owner}/${repo}/git/refs/heads/${baseBranch}`;
+  await githubFetch(updateRefEndpoint, token, {
+    method: 'PATCH',
+    body: {
+      sha: newCommitSha,
+      force: false,
+    },
+  });
+
+  return { commitSha: newCommitSha };
 }
 
 /**

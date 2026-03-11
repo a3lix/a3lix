@@ -31,11 +31,11 @@ A3lix sits between public Telegram users and your private GitHub repository. The
 | **Unauthorised user sends messages** | All incoming Telegram chat IDs are checked against `agent.json` role lists; unknown IDs receive no response and are logged |
 | **Authorised user requests destructive change** | Destructive keyword blocklist rejects requests containing dangerous patterns before AI processing |
 | **AI hallucinates a path outside allowed directories** | `guardrails.ts` performs a hard path check on every proposed file write — no exceptions |
-| **Secrets leaked via git** | `agent.json` and `.dev.vars` are in `.gitignore`; `npx a3lix@latest update` never touches them |
+| **Secrets leaked via git** | `agent.json` and `.dev.vars` are in `.gitignore`; `npx a3lixcms@latest update` never touches them |
 | **Compromised GitHub token used to deploy malware** | Fine-grained PAT is scoped to a single repo and only Contents + Workflows permissions |
 | **Webhook spoofing** | Every inbound Telegram webhook is verified against `X-Telegram-Bot-Api-Secret-Token` |
 | **Replay or flood attacks** | KV-backed per-user rate limiting rejects excess requests within a 24-hour window |
-| **Change reaches production without review** | `requireApprovalForAll: true` (default) means nothing merges to `main` without an explicit owner `YES` |
+| **Accidental production changes** | Use `PREVIEW` mode for human review before merge; restrict editor access; monitor audit logs |
 
 ---
 
@@ -143,25 +143,22 @@ Rate limits are enforced per Telegram chat ID using Cloudflare KV, which provide
 | Changes per user per day | `5` | `limits.changesPerUserPerDay` |
 | Preview branch expiry | `24` hours | `limits.previewExpiryHours` |
 
-Preview branches are auto-deleted by a scheduled Worker Cron Trigger after `previewExpiryHours` to prevent stale branch accumulation in GitHub.
+Pending preview approvals expire from KV after `previewExpiryHours` (and are also filtered by `expiresAt`) to prevent stale approval prompts.
 
 ---
 
 ## Approval Flow
 
-A3lix enforces a mandatory approval step for every change. This is non-negotiable by design:
+A3lix currently supports two deployment paths:
 
-1. The user's change request is parsed by the AI and a preview branch is pushed to GitHub.
-2. Cloudflare Pages builds the preview — this never touches `main`.
-3. The **site owner** (identified by `bot.ownerChatId` in `agent.json`) receives a Telegram message with:
-   - A summary of the proposed changes (files modified, diffs where sensible)
-   - The Cloudflare Pages preview URL
-   - Buttons/instructions to reply `YES` or `NO`
-4. **On `YES`**: The worker calls the GitHub API to merge the preview branch into `main` via a merge commit, then deletes the preview branch.
-5. **On `NO`**: The preview branch is deleted, the requester is notified their change was declined, and the rejection is logged.
-6. If `limits.requireApprovalForAll` is `false`, editor-level users can self-approve — but the owner still receives a notification.
+1. A requester sends a change request.
+2. The worker parses and validates the proposed file changes.
+3. The requester is prompted to choose `LIVE` or `PREVIEW`.
+4. If `LIVE` is chosen, changes are committed directly to the base branch.
+5. If `PREVIEW` is chosen, a preview branch is created and a Pages preview URL is returned.
+6. For previews, replying `YES` merges to `main`; replying `NO` discards the pending approval record.
 
-> **Why is this mandatory?** AI models make mistakes. A human must always be in the loop before production content changes.
+> **Safety guidance:** Treat `PREVIEW` as the recommended production workflow so a human can validate changes before merge.
 
 ---
 
@@ -172,12 +169,13 @@ Roles are enforced at the Worker level on every request, not just at the Telegra
 | Role | Can request changes | Can approve changes | Can manage roles | Can view audit log |
 |------|--------------------|--------------------|-----------------|-------------------|
 | **Owner** | ✅ | ✅ | ✅ | ✅ |
-| **Editor** | ✅ | ❌ (cannot self-approve) | ❌ | ❌ |
+| **Editor** | ✅ | ✅ (for their own pending preview) | ❌ | ❌ |
 | **Viewer** | ❌ | ❌ | ❌ | ❌ |
 
 ### Key enforcement rules
 
-- **Editors cannot self-approve.** Even if `requireApprovalForAll` is `false`, an editor cannot approve their own change request. Approval messages from non-owner chat IDs are silently dropped and logged.
+- **Owner can always act on pending previews.** The owner may approve/reject previews regardless of who requested them.
+- **Requester can act on their own pending preview.** Editors can approve/reject their own preview submission.
 - **Viewers are strictly read-only.** Any command from a viewer that would cause a write operation is rejected.
 - **Unknown chat IDs receive no response.** The worker returns HTTP 200 to Telegram (to prevent retries) but takes no action and logs the unknown ID.
 
@@ -223,8 +221,8 @@ Every significant action is written to Cloudflare KV under the key prefix `audit
 | Action | Triggering event |
 |--------|----------------|
 | `CHANGE_REQUESTED` | User submits a change request |
-| `CHANGE_APPROVED` | Owner sends `YES` |
-| `CHANGE_REJECTED` | Owner sends `NO` |
+| `CHANGE_APPROVED` | Owner or requester sends `YES` on a pending preview |
+| `CHANGE_REJECTED` | Owner or requester sends `NO` on a pending preview |
 | `CHANGE_BLOCKED_PATH` | Request blocked by path guardrail |
 | `CHANGE_BLOCKED_KEYWORD` | Request blocked by keyword filter |
 | `RATE_LIMIT_HIT` | User exceeds daily change limit |
@@ -232,8 +230,7 @@ Every significant action is written to Cloudflare KV under the key prefix `audit
 | `OTP_ISSUED` | Owner issued an OTP for a new user |
 | `OTP_REDEEMED` | New user redeemed an OTP successfully |
 | `OTP_FAILED` | Invalid or expired OTP attempt |
-| `APPROVAL_SPOOFED` | Non-owner attempted to approve a change |
-| `BRANCH_EXPIRED` | Preview branch auto-deleted after TTL |
+| `APPROVAL_SPOOFED` | Unauthorized user attempted to approve/reject a pending preview |
 
 Audit log entries are retained in KV for 30 days, after which they expire automatically via KV TTL. The owner can query recent logs with the `/audit` bot command.
 
@@ -254,7 +251,7 @@ This ensures that only Telegram (which knows the secret token) can trigger the w
 
 ## Update System Safety
 
-Running `npx a3lix@latest update` fetches and applies the latest worker code from the npm registry. The update system is designed to be non-destructive:
+Running `npx a3lixcms@latest update` fetches and applies the latest worker code from the npm registry. The update system is designed to be non-destructive:
 
 ### Files the updater will NEVER touch
 
@@ -284,13 +281,13 @@ Run through this checklist before going live with A3lix:
 - [ ] `TELEGRAM_BOT_TOKEN` is stored as a wrangler secret, not in `wrangler.toml` vars
 - [ ] `TELEGRAM_SECRET_TOKEN` is set and the webhook was registered with `secret_token` parameter
 - [ ] `bot.ownerChatId` is set to **your** Telegram chat ID (not a group or channel)
-- [ ] `limits.requireApprovalForAll` is `true` (default — change only if you fully understand the implications)
+- [ ] Team members use `PREVIEW` (not `LIVE`) for production changes requiring human verification
 - [ ] `paths.allowed` contains only the minimum paths needed (do **not** add `src/lib`, `src/env.ts`, etc.)
 - [ ] You have reviewed the `roles.editors` and `roles.viewers` lists and removed any stale chat IDs
 - [ ] Workers AI (or your chosen AI provider) is enabled and the API key (if required) is stored as `AI_API_KEY` secret
 - [ ] KV namespace IDs in `wrangler.toml` are set to real IDs (not the placeholder values)
 - [ ] You have sent a test message to the bot and confirmed the audit log is being written to KV
-- [ ] You have tested the `NO` approval flow and confirmed the preview branch is deleted after rejection
+- [ ] You have tested the `NO` preview flow and confirmed pending approval state is removed
 
 ---
 

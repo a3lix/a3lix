@@ -1,6 +1,6 @@
 {
   "name": "a3lixcms",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "The weird little agent that texts your clients back with a preview link.",
   "bin": {
     "a3lixcms": "./setup/cli.js"
@@ -25,7 +25,16 @@
     "deploy": "wrangler deploy",
     "lint": "eslint . --ext .ts"
   },
-  "keywords": ["cloudflare", "workers", "telegram", "ai", "agent", "cms", "nextjs", "astro"],
+  "keywords": [
+    "cloudflare",
+    "workers",
+    "telegram",
+    "ai",
+    "agent",
+    "cms",
+    "nextjs",
+    "astro"
+  ],
   "author": "Felix (A3lix contributors)",
   "license": "MIT",
   "repository": {

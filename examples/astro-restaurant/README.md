@@ -8,7 +8,7 @@
 
 A real-world scenario: Felix and Marco run a schnitzel restaurant in Toronto. They want to update their weekly specials, change menu prices, and rewrite their story — without touching code or logging into a CMS. They just text their Telegram bot.
 
-All content lives in `src/content/` as plain JSON and Markdown files. A3lix reads those files, makes the requested changes on a preview branch, and sends back a live preview URL for approval before anything goes to `main`.
+All content lives in `src/content/` as plain JSON and Markdown files. A3lix reads those files, prepares the requested edits, and lets the requester choose `LIVE` (direct deploy) or `PREVIEW` (branch + approval) before merge to `main`.
 
 ---
 
