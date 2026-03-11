@@ -87,6 +87,12 @@ export interface DeployResult {
   previewReady: boolean;
 }
 
+export interface PreviewStatusResult {
+  state: 'pending' | 'ready' | 'failed';
+  previewUrl: string;
+  failureReason?: string;
+}
+
 interface PagesDeployment {
   url?: string;
   aliases?: string[];
@@ -101,10 +107,6 @@ interface PagesDeploymentsResponse {
   result?: PagesDeployment[];
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 function toAbsoluteUrl(urlLike: string): string {
   return /^https?:\/\//i.test(urlLike) ? urlLike : `https://${urlLike}`;
 }
@@ -114,118 +116,123 @@ interface PreviewResolutionResult {
   ready: boolean;
 }
 
-async function waitForPreviewByUrl(params: {
+async function checkPreviewByUrl(params: {
   previewUrl: string;
-  timeoutMs: number;
-  intervalMs: number;
-}): Promise<PreviewResolutionResult> {
-  const { previewUrl, timeoutMs, intervalMs } = params;
-  const startedAt = Date.now();
+}): Promise<PreviewStatusResult> {
+  const { previewUrl } = params;
 
-  while (Date.now() - startedAt < timeoutMs) {
-    try {
-      const probeUrl = `${previewUrl}?__a3lix_probe=${Date.now()}`;
-      const res = await fetch(probeUrl, { method: 'GET' });
-      if (res.status >= 200 && res.status < 400) {
-        return { url: previewUrl, ready: true };
-      }
-    } catch {
-      // ignore and retry
+  try {
+    const probeUrl = `${previewUrl}?__a3lix_probe=${Date.now()}`;
+    const res = await fetch(probeUrl, { method: 'GET' });
+    if (res.status >= 200 && res.status < 400) {
+      return { state: 'ready', previewUrl };
     }
-
-    await sleep(intervalMs);
+  } catch {
+    // ignore and treat as pending
   }
 
-  return { url: previewUrl, ready: false };
+  return { state: 'pending', previewUrl };
 }
 
-async function waitForPreviewByPagesApi(params: {
+async function checkPreviewByPagesApi(params: {
   accountId: string;
   apiToken: string;
   pagesProjectName: string;
   branchName: string;
-  timeoutMs: number;
-  intervalMs: number;
-}): Promise<PreviewResolutionResult> {
+}): Promise<PreviewStatusResult> {
   const {
     accountId,
     apiToken,
     pagesProjectName,
     branchName,
-    timeoutMs,
-    intervalMs,
   } = params;
 
-  const startedAt = Date.now();
+  const fallbackUrl = buildPreviewUrl(branchName, pagesProjectName);
 
-  while (Date.now() - startedAt < timeoutMs) {
-    try {
-      const endpoint =
-        `https://api.cloudflare.com/client/v4/accounts/${accountId}` +
-        `/pages/projects/${pagesProjectName}/deployments?env=preview`;
+  try {
+    const endpoint =
+      `https://api.cloudflare.com/client/v4/accounts/${accountId}` +
+      `/pages/projects/${pagesProjectName}/deployments?env=preview`;
 
-      const res = await fetch(endpoint, {
-        headers: {
-          'Authorization': `Bearer ${apiToken}`,
-          'Content-Type': 'application/json',
-        },
-      });
+    const res = await fetch(endpoint, {
+      headers: {
+        'Authorization': `Bearer ${apiToken}`,
+        'Content-Type': 'application/json',
+      },
+    });
 
-      if (!res.ok) {
-        await sleep(intervalMs);
-        continue;
-      }
-
-      const payload = (await res.json()) as PagesDeploymentsResponse;
-      const deployments = payload.result ?? [];
-
-      const match = deployments.find(
-        (d) =>
-          d.environment === 'preview' &&
-          d.deployment_trigger?.metadata?.branch === branchName,
-      );
-
-      if (!match) {
-        await sleep(intervalMs);
-        continue;
-      }
-
-      const stageStatus = (match.latest_stage?.status ?? match.status ?? '').toLowerCase();
-
-      if (stageStatus === 'success') {
-        const alias = match.aliases?.find((a) => a.includes('.pages.dev'));
-        if (typeof alias === 'string' && alias.length > 0) {
-          return { url: toAbsoluteUrl(alias), ready: true };
-        }
-        if (typeof match.url === 'string' && match.url.length > 0) {
-          return { url: toAbsoluteUrl(match.url), ready: true };
-        }
-        return {
-          url: buildPreviewUrl(branchName, pagesProjectName),
-          ready: true,
-        };
-      }
-
-      if (
-        stageStatus === 'failed' ||
-        stageStatus === 'failure' ||
-        stageStatus === 'error' ||
-        stageStatus === 'canceled' ||
-        stageStatus === 'cancelled'
-      ) {
-        throw new Error(`Cloudflare Pages preview build failed with status "${stageStatus}".`);
-      }
-    } catch (err) {
-      console.error('[a3lix] waitForPreviewByPagesApi poll error:', err);
+    if (!res.ok) {
+      return { state: 'pending', previewUrl: fallbackUrl };
     }
 
-    await sleep(intervalMs);
+    const payload = (await res.json()) as PagesDeploymentsResponse;
+    const deployments = payload.result ?? [];
+
+    const match = deployments.find(
+      (d) =>
+        d.environment === 'preview' &&
+        d.deployment_trigger?.metadata?.branch === branchName,
+    );
+
+    if (!match) {
+      return { state: 'pending', previewUrl: fallbackUrl };
+    }
+
+    const stageStatus = (match.latest_stage?.status ?? match.status ?? '').toLowerCase();
+
+    if (stageStatus === 'success') {
+      const alias = match.aliases?.find((a) => a.includes('.pages.dev'));
+      if (typeof alias === 'string' && alias.length > 0) {
+        return { state: 'ready', previewUrl: toAbsoluteUrl(alias) };
+      }
+      if (typeof match.url === 'string' && match.url.length > 0) {
+        return { state: 'ready', previewUrl: toAbsoluteUrl(match.url) };
+      }
+      return { state: 'ready', previewUrl: fallbackUrl };
+    }
+
+    if (
+      stageStatus === 'failed' ||
+      stageStatus === 'failure' ||
+      stageStatus === 'error' ||
+      stageStatus === 'canceled' ||
+      stageStatus === 'cancelled'
+    ) {
+      return {
+        state: 'failed',
+        previewUrl: fallbackUrl,
+        failureReason: `Cloudflare Pages build failed (${stageStatus})`,
+      };
+    }
+
+    return { state: 'pending', previewUrl: fallbackUrl };
+  } catch (err) {
+    console.error('[a3lix] checkPreviewByPagesApi error:', err);
+    return { state: 'pending', previewUrl: fallbackUrl };
+  }
+}
+
+export async function checkPreviewStatus(params: {
+  pagesProjectName: string;
+  branchName: string;
+  env?: {
+    CF_ACCOUNT_ID?: string;
+    CF_API_TOKEN?: string;
+  };
+}): Promise<PreviewStatusResult> {
+  const { pagesProjectName, branchName, env } = params;
+  const fallbackUrl = buildPreviewUrl(branchName, pagesProjectName);
+
+  if (env?.CF_ACCOUNT_ID && env?.CF_API_TOKEN) {
+    return checkPreviewByPagesApi({
+      accountId: env.CF_ACCOUNT_ID,
+      apiToken: env.CF_API_TOKEN,
+      pagesProjectName,
+      branchName,
+    });
   }
 
-  return {
-    url: buildPreviewUrl(branchName, pagesProjectName),
-    ready: false,
-  };
+  return checkPreviewByUrl({ previewUrl: fallbackUrl });
 }
 
 // ---------------------------------------------------------------------------
@@ -319,33 +326,15 @@ export async function deployPreview(params: {
     pagesProjectName: deployConfig.pagesProjectName,
   });
 
-  const timeoutMs = deployConfig.framework === 'astro' ? 4 * 60_000 : 5 * 60_000;
-  const intervalMs = 5_000;
   const estimatedBuildSeconds = deployConfig.framework === 'astro' ? 45 : 60;
-
-  const resolution =
-    env?.CF_ACCOUNT_ID && env?.CF_API_TOKEN
-      ? await waitForPreviewByPagesApi({
-          accountId: env.CF_ACCOUNT_ID,
-          apiToken: env.CF_API_TOKEN,
-          pagesProjectName: deployConfig.pagesProjectName,
-          branchName: result.branchName,
-          timeoutMs,
-          intervalMs,
-        })
-      : await waitForPreviewByUrl({
-          previewUrl: result.previewUrl,
-          timeoutMs,
-          intervalMs,
-        });
 
   return {
     branchName: result.branchName,
-    previewUrl: resolution.url,
+    previewUrl: result.previewUrl,
     commitSha: result.commitSha,
     deployedAt: new Date().toISOString(),
     estimatedBuildSeconds,
-    previewReady: resolution.ready,
+    previewReady: false,
   };
 }
 

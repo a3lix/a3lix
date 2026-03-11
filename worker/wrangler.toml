@@ -15,8 +15,13 @@ preview_id = "REPLACE_WITH_YOUR_KV_PREVIEW_ID"
 ENVIRONMENT = "production"
 LOG_LEVEL = "info"
 
+[triggers]
+crons = ["*/1 * * * *"]
+
 # Secrets (set via `wrangler secret put`):
 # GITHUB_TOKEN          - Fine-grained GitHub PAT (repo contents + workflows)
 # TELEGRAM_BOT_TOKEN    - From @BotFather
 # TELEGRAM_SECRET_TOKEN - Random string to verify webhook requests
 # AI_API_KEY            - Only needed if using non-Workers-AI provider
+# CF_ACCOUNT_ID         - Optional; Cloudflare account id for Pages deployment status polling
+# CF_API_TOKEN          - Optional; API token with Pages read access for deployment polling

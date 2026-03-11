@@ -88,6 +88,47 @@ export function replyPreviewBuilding(): string {
   return `🏗️ Change prepared. Triggering Cloudflare preview build now...`;
 }
 
+export function replyPreviewQueued(params: {
+  branchName: string;
+  estimatedSeconds: number;
+}): string {
+  const { branchName, estimatedSeconds } = params;
+  return (
+    `⏳ <b>Preview is building</b>\n\n` +
+    `I'll send the preview link as soon as Cloudflare confirms the deploy is ready.\n` +
+    `Expected build time: ~${estimatedSeconds}s\n\n` +
+    `🌿 Branch: <code>${esc(branchName)}</code>`
+  );
+}
+
+export function replyPreviewStillBuilding(params: {
+  branchName: string;
+  minutesWaiting: number;
+}): string {
+  const { branchName, minutesWaiting } = params;
+  return (
+    `⏳ <b>Still building preview</b>\n\n` +
+    `Cloudflare is still processing this branch.\n` +
+    `Waited: ~${minutesWaiting} minute(s)\n\n` +
+    `🌿 Branch: <code>${esc(branchName)}</code>`
+  );
+}
+
+export function replyPreviewFailed(params: {
+  summary: string;
+  branchName: string;
+  reason?: string;
+}): string {
+  const { summary, branchName, reason } = params;
+  const detail = reason ? `\n\nReason: ${esc(reason)}` : '';
+  return (
+    `❌ <b>Preview build failed</b>\n\n` +
+    `📝 ${esc(summary)}\n` +
+    `🌿 Branch: <code>${esc(branchName)}</code>` +
+    detail
+  );
+}
+
 export function replyUnknownIntent(): string {
   return (
     `🤔 I didn't quite understand that.\n\n` +

@@ -11,6 +11,7 @@
  *
  * Route table:
  *   POST /telegram  →  handleTelegramWebhook
+ *   POST /github    →  handleGitHubWebhook
  *   POST /email     →  handleEmailWebhook (stub, v1.1)
  *   GET  /health    →  health check JSON
  *   *               →  404
@@ -48,6 +49,7 @@ import {
 import {
   type GitHubConfig,
   type GitHubFileChange,
+  getPendingApproval,
   storePendingApproval,
   deletePendingApproval,
   listPendingApprovals,
@@ -58,6 +60,7 @@ import {
 import {
   deployPreview,
   approveAndMerge,
+  checkPreviewStatus,
   type DeployConfig,
 } from './deployer';
 
@@ -70,6 +73,9 @@ import {
   replyWelcomeEditor,
   replyParsing,
   replyPreviewBuilding,
+  replyPreviewQueued,
+  replyPreviewStillBuilding,
+  replyPreviewFailed,
   replyUnknownIntent,
   replyNeedsClarification,
   replyPreviewReady,
@@ -108,6 +114,8 @@ export interface Env {
   TELEGRAM_BOT_TOKEN: string;
   /** Shared secret set in the Telegram webhook URL to verify request origin. */
   TELEGRAM_SECRET_TOKEN: string;
+  /** Shared secret for GitHub webhook signature verification (HMAC SHA-256). */
+  GITHUB_WEBHOOK_SECRET?: string;
   /** API key for non-Workers-AI providers (openai, claude, grok, groq, gemini). */
   AI_API_KEY: string;
   /** Optional Cloudflare account ID for Pages deployment polling. */
@@ -201,6 +209,32 @@ interface TelegramUpdate {
   message?: TelegramMessage;
 }
 
+type GitHubWebhookOutcome = 'success' | 'failure' | 'unknown';
+
+interface GitHubWebhookResolution {
+  branchName: string;
+  outcome: GitHubWebhookOutcome;
+}
+
+interface PendingPreviewNotification {
+  branchName: string;
+  summary: string;
+  requestedByUserId: string;
+  requesterChatId: string;
+  ownerChatId: string;
+  pagesProjectName: string;
+  estimatedSeconds: number;
+  createdAt: string;
+  nextCheckAt: string;
+  attempts: number;
+  delayNoticesSent: number;
+  lastKnownPreviewUrl: string;
+}
+
+const PREVIEW_NOTIFICATION_KEY_PREFIX = 'preview:notify:';
+const PREVIEW_NOTIFICATION_LOCK_PREFIX = 'preview:notify:lock:';
+const PREVIEW_NOTIFICATION_TTL_SECONDS = 86_400;
+
 // ---------------------------------------------------------------------------
 // Type guards
 // ---------------------------------------------------------------------------
@@ -250,6 +284,402 @@ function isAgentConfig(value: unknown): value is AgentConfig {
   if (typeof cloudflare['pagesProjectName'] !== 'string') return false;
 
   return true;
+}
+
+function isPendingPreviewNotification(value: unknown): value is PendingPreviewNotification {
+  if (typeof value !== 'object' || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v['branchName'] === 'string' &&
+    typeof v['summary'] === 'string' &&
+    typeof v['requestedByUserId'] === 'string' &&
+    typeof v['requesterChatId'] === 'string' &&
+    typeof v['ownerChatId'] === 'string' &&
+    typeof v['pagesProjectName'] === 'string' &&
+    typeof v['estimatedSeconds'] === 'number' &&
+    typeof v['createdAt'] === 'string' &&
+    typeof v['nextCheckAt'] === 'string' &&
+    typeof v['attempts'] === 'number' &&
+    typeof v['delayNoticesSent'] === 'number' &&
+    typeof v['lastKnownPreviewUrl'] === 'string'
+  );
+}
+
+function previewNotificationKey(branchName: string): string {
+  return `${PREVIEW_NOTIFICATION_KEY_PREFIX}${branchName}`;
+}
+
+function previewNotificationLockKey(branchName: string): string {
+  return `${PREVIEW_NOTIFICATION_LOCK_PREFIX}${branchName}`;
+}
+
+function envCfBindings(env: Env): { CF_ACCOUNT_ID?: string; CF_API_TOKEN?: string } {
+  return {
+    ...(env.CF_ACCOUNT_ID !== undefined ? { CF_ACCOUNT_ID: env.CF_ACCOUNT_ID } : {}),
+    ...(env.CF_API_TOKEN !== undefined ? { CF_API_TOKEN: env.CF_API_TOKEN } : {}),
+  };
+}
+
+function safeRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function isPreviewBranchName(value: unknown): value is string {
+  return typeof value === 'string' && value.startsWith('preview-');
+}
+
+function extractGitHubWebhookResolution(
+  eventName: string,
+  payload: unknown,
+): GitHubWebhookResolution | null {
+  const root = safeRecord(payload);
+  if (!root) return null;
+
+  if (eventName === 'check_run') {
+    if (root['action'] !== 'completed') return null;
+    const checkRun = safeRecord(root['check_run']);
+    const checkSuite = safeRecord(checkRun?.['check_suite']);
+    const branchName = checkSuite?.['head_branch'];
+    if (!isPreviewBranchName(branchName)) return null;
+
+    const conclusion = checkRun?.['conclusion'];
+    if (conclusion === 'success') return { branchName, outcome: 'success' };
+    if (
+      conclusion === 'failure' ||
+      conclusion === 'timed_out' ||
+      conclusion === 'cancelled' ||
+      conclusion === 'action_required' ||
+      conclusion === 'stale'
+    ) {
+      return { branchName, outcome: 'failure' };
+    }
+    return { branchName, outcome: 'unknown' };
+  }
+
+  if (eventName === 'check_suite') {
+    if (root['action'] !== 'completed') return null;
+    const checkSuite = safeRecord(root['check_suite']);
+    const branchName = checkSuite?.['head_branch'];
+    if (!isPreviewBranchName(branchName)) return null;
+
+    const conclusion = checkSuite?.['conclusion'];
+    if (conclusion === 'success') return { branchName, outcome: 'success' };
+    if (
+      conclusion === 'failure' ||
+      conclusion === 'timed_out' ||
+      conclusion === 'cancelled' ||
+      conclusion === 'action_required' ||
+      conclusion === 'stale'
+    ) {
+      return { branchName, outcome: 'failure' };
+    }
+    return { branchName, outcome: 'unknown' };
+  }
+
+  if (eventName === 'status') {
+    const state = root['state'];
+    if (state !== 'success' && state !== 'failure' && state !== 'error') return null;
+
+    const branches = Array.isArray(root['branches']) ? root['branches'] : [];
+    for (const b of branches) {
+      const branch = safeRecord(b)?.['name'];
+      if (!isPreviewBranchName(branch)) continue;
+      return {
+        branchName: branch,
+        outcome: state === 'success' ? 'success' : 'failure',
+      };
+    }
+    return null;
+  }
+
+  if (eventName === 'deployment_status') {
+    const deployment = safeRecord(root['deployment']);
+    const status = safeRecord(root['deployment_status']);
+    const branchName = deployment?.['ref'];
+    if (!isPreviewBranchName(branchName)) return null;
+
+    const state = status?.['state'];
+    if (state === 'success') return { branchName, outcome: 'success' };
+    if (
+      state === 'failure' ||
+      state === 'error' ||
+      state === 'inactive'
+    ) {
+      return { branchName, outcome: 'failure' };
+    }
+    return { branchName, outcome: 'unknown' };
+  }
+
+  return null;
+}
+
+function timingSafeHexEquals(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let mismatch = 0;
+  for (let i = 0; i < a.length; i++) {
+    mismatch |= (a.charCodeAt(i) ?? 0) ^ (b.charCodeAt(i) ?? 0);
+  }
+  return mismatch === 0;
+}
+
+async function verifyGitHubWebhook(
+  request: Request,
+  bodyText: string,
+  secret: string,
+): Promise<boolean> {
+  const signatureHeader = request.headers.get('X-Hub-Signature-256');
+  if (signatureHeader === null) return false;
+  if (!signatureHeader.startsWith('sha256=')) return false;
+
+  const providedHex = signatureHeader.slice('sha256='.length).toLowerCase();
+
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+
+  const digest = await crypto.subtle.sign(
+    'HMAC',
+    key,
+    new TextEncoder().encode(bodyText),
+  );
+
+  const expectedHex = Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+
+  return timingSafeHexEquals(providedHex, expectedHex);
+}
+
+async function storePendingPreviewNotification(
+  notification: PendingPreviewNotification,
+  kv: KVNamespace,
+): Promise<void> {
+  await kv.put(
+    previewNotificationKey(notification.branchName),
+    JSON.stringify(notification),
+    { expirationTtl: PREVIEW_NOTIFICATION_TTL_SECONDS },
+  );
+}
+
+async function getPendingPreviewNotification(
+  branchName: string,
+  kv: KVNamespace,
+): Promise<PendingPreviewNotification | null> {
+  const raw = await kv.get(previewNotificationKey(branchName));
+  if (raw === null) return null;
+
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return isPendingPreviewNotification(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+async function deletePendingPreviewNotification(branchName: string, kv: KVNamespace): Promise<void> {
+  await kv.delete(previewNotificationKey(branchName));
+}
+
+async function listPendingPreviewNotificationBranches(kv: KVNamespace): Promise<string[]> {
+  const list = await kv.list({ prefix: PREVIEW_NOTIFICATION_KEY_PREFIX });
+  return list.keys
+    .map((k) =>
+      k.name.startsWith(PREVIEW_NOTIFICATION_KEY_PREFIX)
+        ? k.name.slice(PREVIEW_NOTIFICATION_KEY_PREFIX.length)
+        : null,
+    )
+    .filter((name): name is string => typeof name === 'string' && name.length > 0);
+}
+
+async function processPendingPreviewNotification(
+  branchName: string,
+  env: Env,
+  options?: { forceCheck?: boolean },
+): Promise<void> {
+  const forceCheck = options?.forceCheck === true;
+  const lockKey = previewNotificationLockKey(branchName);
+  const existingLock = await env.A3LIX_KV.get(lockKey);
+  if (existingLock !== null) return;
+
+  await env.A3LIX_KV.put(lockKey, '1', { expirationTtl: 55 });
+
+  const notification = await getPendingPreviewNotification(branchName, env.A3LIX_KV);
+  if (!notification) {
+    return;
+  }
+
+  const nowMs = Date.now();
+  const nextCheckMs = Date.parse(notification.nextCheckAt);
+  if (!forceCheck && Number.isFinite(nextCheckMs) && nextCheckMs > nowMs) {
+    return;
+  }
+
+  const approval = await getPendingApproval(notification.branchName, env.A3LIX_KV);
+  if (!approval) {
+    await deletePendingPreviewNotification(notification.branchName, env.A3LIX_KV);
+    return;
+  }
+
+  const status = await checkPreviewStatus({
+    pagesProjectName: notification.pagesProjectName,
+    branchName: notification.branchName,
+    env: envCfBindings(env),
+  });
+
+  if (status.state === 'ready') {
+    await sendTelegramMessage({
+      chatId: notification.requesterChatId,
+      text: replyPreviewReady({
+        summary: notification.summary,
+        previewUrl: status.previewUrl,
+        estimatedSeconds: notification.estimatedSeconds,
+        branchName: notification.branchName,
+      }),
+      botToken: env.TELEGRAM_BOT_TOKEN,
+    });
+
+    if (notification.requestedByUserId !== notification.ownerChatId) {
+      await sendTelegramMessage({
+        chatId: notification.ownerChatId,
+        text: replyApprovalPending(status.previewUrl),
+        botToken: env.TELEGRAM_BOT_TOKEN,
+      });
+    }
+
+    await deletePendingPreviewNotification(notification.branchName, env.A3LIX_KV);
+    return;
+  }
+
+  if (status.state === 'failed') {
+    const failureText = replyPreviewFailed({
+      summary: notification.summary,
+      branchName: notification.branchName,
+      ...(status.failureReason !== undefined ? { reason: status.failureReason } : {}),
+    });
+
+    await sendTelegramMessage({
+      chatId: notification.requesterChatId,
+      text: failureText,
+      botToken: env.TELEGRAM_BOT_TOKEN,
+    });
+
+    if (notification.requestedByUserId !== notification.ownerChatId) {
+      await sendTelegramMessage({
+        chatId: notification.ownerChatId,
+        text: failureText,
+        botToken: env.TELEGRAM_BOT_TOKEN,
+      });
+    }
+
+    await deletePendingApproval(notification.branchName, env.A3LIX_KV);
+    await deletePendingPreviewNotification(notification.branchName, env.A3LIX_KV);
+    return;
+  }
+
+  if (forceCheck) {
+    const updated: PendingPreviewNotification = {
+      ...notification,
+      nextCheckAt: new Date(Date.now() + 60_000).toISOString(),
+      lastKnownPreviewUrl: status.previewUrl,
+    };
+
+    await storePendingPreviewNotification(updated, env.A3LIX_KV);
+    return;
+  }
+
+  const attempts = notification.attempts + 1;
+  const shouldSendDelayNotice =
+    (attempts === 10 || attempts === 30) && notification.delayNoticesSent < 2;
+
+  if (shouldSendDelayNotice) {
+    await sendTelegramMessage({
+      chatId: notification.requesterChatId,
+      text: replyPreviewStillBuilding({
+        branchName: notification.branchName,
+        minutesWaiting: Math.ceil((Date.now() - Date.parse(notification.createdAt)) / 60_000),
+      }),
+      botToken: env.TELEGRAM_BOT_TOKEN,
+    });
+  }
+
+  const nextDelaySeconds = attempts < 10 ? 60 : attempts < 30 ? 120 : 300;
+  const updated: PendingPreviewNotification = {
+    ...notification,
+    attempts,
+    delayNoticesSent: shouldSendDelayNotice
+      ? notification.delayNoticesSent + 1
+      : notification.delayNoticesSent,
+    nextCheckAt: new Date(Date.now() + nextDelaySeconds * 1000).toISOString(),
+    lastKnownPreviewUrl: status.previewUrl,
+  };
+
+  await storePendingPreviewNotification(updated, env.A3LIX_KV);
+}
+
+async function runPreviewNotificationPoller(env: Env, ctx: ExecutionContext): Promise<void> {
+  const branches = await listPendingPreviewNotificationBranches(env.A3LIX_KV);
+  for (const branchName of branches) {
+    ctx.waitUntil(
+      processPendingPreviewNotification(branchName, env).catch((error: unknown) => {
+        console.error('[a3lix] preview notification poll error:', error);
+      }),
+    );
+  }
+}
+
+async function handleGitHubWebhook(
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext,
+): Promise<Response> {
+  if (!env.GITHUB_WEBHOOK_SECRET) {
+    return new Response(null, { status: 503 });
+  }
+
+  const eventName = request.headers.get('X-GitHub-Event');
+  if (!eventName) {
+    return new Response(null, { status: 400 });
+  }
+
+  let bodyText = '';
+  try {
+    bodyText = await request.text();
+  } catch {
+    return new Response(null, { status: 400 });
+  }
+
+  const valid = await verifyGitHubWebhook(request, bodyText, env.GITHUB_WEBHOOK_SECRET);
+  if (!valid) {
+    return new Response(null, { status: 401 });
+  }
+
+  let payload: unknown;
+  try {
+    payload = JSON.parse(bodyText);
+  } catch {
+    return new Response(null, { status: 400 });
+  }
+
+  const resolution = extractGitHubWebhookResolution(eventName, payload);
+  if (!resolution) {
+    return new Response('OK', { status: 200 });
+  }
+
+  ctx.waitUntil(
+    processPendingPreviewNotification(resolution.branchName, env, { forceCheck: true }).catch(
+      (error: unknown) => {
+        console.error('[a3lix] github webhook preview processing failed:', error);
+      },
+    ),
+  );
+
+  return new Response('OK', { status: 200 });
 }
 
 // ---------------------------------------------------------------------------
@@ -598,10 +1028,7 @@ async function handleChangeRequest(
       userId,
       changes: githubChanges,
       summary,
-      env: {
-        ...(env.CF_ACCOUNT_ID !== undefined ? { CF_ACCOUNT_ID: env.CF_ACCOUNT_ID } : {}),
-        ...(env.CF_API_TOKEN !== undefined ? { CF_API_TOKEN: env.CF_API_TOKEN } : {}),
-      },
+      env: envCfBindings(env),
     });
 
     // ── 8. Store pending approval ─────────────────────────────────────────────
@@ -620,31 +1047,37 @@ async function handleChangeRequest(
 
     await storePendingApproval(deployResult.branchName, pendingApproval, env.A3LIX_KV);
 
+    const pendingPreviewNotification: PendingPreviewNotification = {
+      branchName: deployResult.branchName,
+      summary,
+      requestedByUserId: userId,
+      requesterChatId: String(chatId),
+      ownerChatId: config.bot.ownerChatId,
+      pagesProjectName: config.cloudflare.pagesProjectName,
+      estimatedSeconds: deployResult.estimatedBuildSeconds,
+      createdAt: now.toISOString(),
+      nextCheckAt: new Date(now.getTime() + 60_000).toISOString(),
+      attempts: 0,
+      delayNoticesSent: 0,
+      lastKnownPreviewUrl: deployResult.previewUrl,
+    };
+
+    await storePendingPreviewNotification(pendingPreviewNotification, env.A3LIX_KV);
+
     // ── 9. Write last_deploy timestamp ────────────────────────────────────────
     await env.A3LIX_KV.put('last_deploy', now.toISOString());
 
     // ── 10. Notify requesting user ────────────────────────────────────────────
     await sendTelegramMessage({
       chatId,
-      text: replyPreviewReady({
-        summary,
-        previewUrl: deployResult.previewUrl,
-        estimatedSeconds: deployResult.estimatedBuildSeconds,
+      text: replyPreviewQueued({
         branchName: deployResult.branchName,
+        estimatedSeconds: deployResult.estimatedBuildSeconds,
       }),
       botToken: env.TELEGRAM_BOT_TOKEN,
     });
 
-    // ── 11. Notify owner if request came from a non-owner user ───────────────
-    if (userId !== config.bot.ownerChatId) {
-      await sendTelegramMessage({
-        chatId: config.bot.ownerChatId,
-        text: replyApprovalPending(deployResult.previewUrl),
-        botToken: env.TELEGRAM_BOT_TOKEN,
-      });
-    }
-
-    // ── 12. Audit log — allowed ───────────────────────────────────────────────
+    // ── 11. Audit log — allowed ───────────────────────────────────────────────
     await auditLog({
       userId,
       action: 'change_request',
@@ -1201,6 +1634,7 @@ async function handleEmailWebhook(
  *
  * Routes all HTTP requests to the appropriate handler:
  *   - `POST /telegram` → Telegram bot webhook
+ *   - `POST /github`   → GitHub webhook for event-driven preview completion
  *   - `POST /email`    → Email webhook stub
  *   - `GET  /health`   → Health check
  *   - All others       → 404
@@ -1222,6 +1656,11 @@ export default {
     // ── POST /telegram ───────────────────────────────────────────────────────
     if (method === 'POST' && pathname === '/telegram') {
       return handleTelegramWebhook(request, env, ctx);
+    }
+
+    // ── POST /github ─────────────────────────────────────────────────────────
+    if (method === 'POST' && pathname === '/github') {
+      return handleGitHubWebhook(request, env, ctx);
     }
 
     // ── POST /email ──────────────────────────────────────────────────────────
@@ -1246,5 +1685,9 @@ export default {
 
     // ── 404 ──────────────────────────────────────────────────────────────────
     return new Response('Not Found', { status: 404 });
+  },
+
+  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    await runPreviewNotificationPoller(env, ctx);
   },
 } satisfies ExportedHandler<Env>;
