@@ -96,6 +96,47 @@ export function replyPreviewBuilding(): string {
   return `🏗️ Change prepared. Triggering Cloudflare preview build now...`;
 }
 
+export function replyPreviewQueued(params: {
+  branchName: string;
+  estimatedSeconds: number;
+}): string {
+  const { branchName, estimatedSeconds } = params;
+  return (
+    `⏳ <b>Preview is building</b>\n\n` +
+    `I'll send the preview link as soon as Cloudflare confirms the deploy is ready.\n` +
+    `Expected build time: ~${estimatedSeconds}s\n\n` +
+    `🌿 Branch: <code>${esc(branchName)}</code>`
+  );
+}
+
+export function replyPreviewStillBuilding(params: {
+  branchName: string;
+  minutesWaiting: number;
+}): string {
+  const { branchName, minutesWaiting } = params;
+  return (
+    `⏳ <b>Still building preview</b>\n\n` +
+    `Cloudflare is still processing this branch.\n` +
+    `Waited: ~${minutesWaiting} minute(s)\n\n` +
+    `🌿 Branch: <code>${esc(branchName)}</code>`
+  );
+}
+
+export function replyPreviewFailed(params: {
+  summary: string;
+  branchName: string;
+  reason?: string;
+}): string {
+  const { summary, branchName, reason } = params;
+  const detail = reason ? `\n\nReason: ${esc(reason)}` : '';
+  return (
+    `❌ <b>Preview build failed</b>\n\n` +
+    `📝 ${esc(summary)}\n` +
+    `🌿 Branch: <code>${esc(branchName)}</code>` +
+    detail
+  );
+}
+
 export function replyUnknownIntent(): string {
   return (
     `🤔 I didn't quite understand that.\n\n` +
@@ -120,7 +161,7 @@ export function replyDiffPreview(params: {
   changes: Array<{ path: string; before?: string; after: string }>;
   pendingId: string;
 }): string {
-  const { summary, changes, pendingId: _pendingId } = params;
+  const { summary, changes, pendingId } = params;
 
   // Build a readable diff for each changed file.
   const diffLines: string[] = [];
@@ -162,6 +203,22 @@ export function replyApprovalPending(previewUrl: string): string {
     `⏳ A change is waiting for your approval.\n\n` +
     `<a href="${previewUrl}">View preview</a>\n\n` +
     `Reply <b>YES</b> to approve and go live, or <b>NO</b> to reject.`
+  );
+}
+
+export function replyPreviewReady(params: {
+  summary: string;
+  previewUrl: string;
+  estimatedSeconds: number;
+  branchName: string;
+}): string {
+  const { summary, previewUrl, estimatedSeconds, branchName } = params;
+  return (
+    `🚀 <b>Preview Ready!</b>\n\n` +
+    `📝 ${esc(summary)}\n\n` +
+    `🔗 <a href="${previewUrl}">Open preview</a> — takes ~${estimatedSeconds}s to build\n\n` +
+    `🌿 Branch: <code>${esc(branchName)}</code>\n\n` +
+    `✅ Reply <b>YES</b> to go live\n❌ Reply <b>NO</b> to cancel`
   );
 }
 

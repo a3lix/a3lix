@@ -22,6 +22,8 @@
  * the preview branch directly.
  */
 
+import { buildPreviewUrl } from './deployer';
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -128,6 +130,8 @@ export interface PendingApproval {
   summary: string;
   /** Cloudflare Pages project name, used to build the preview URL. */
   pagesProjectName: string;
+  /** The Cloudflare Pages preview URL for this approval. */
+  previewUrl?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -245,7 +249,7 @@ function isGitHubMergeResponse(value: unknown): value is { sha: string } {
  * @throws {@link GitHubError} when the response status is not 2xx.
  * @internal
  */
-async function githubFetch(
+export async function githubFetch(
   endpoint: string,
   token: string,
   options: { method?: string; body?: unknown } = {},
@@ -287,7 +291,7 @@ async function githubFetch(
  * @returns A Cloudflare Pages–compatible URL slug.
  * @internal
  */
-function _slugifyBranch(branchName: string): string {
+function slugifyBranch(branchName: string): string {
   return branchName
     .toLowerCase()
     .replace(/[^a-z0-9-]/g, '-')
@@ -483,11 +487,9 @@ export async function createPreviewBranch(params: {
     },
   });
 
-  // ── Build Cloudflare Pages preview URL ────────────────────────────────────
-  // Cloudflare Pages preview links for this setup resolve by short deployment
-  // hash (8 chars), which matches the commit SHA prefix in practice.
-  const deploymentHash = newCommitSha.slice(0, 8);
-  const previewUrl = `https://${deploymentHash}.${pagesProjectName}.pages.dev/`;
+   // ── Build Cloudflare Pages preview URL ────────────────────────────────────
+   // Use the deterministic preview URL based on branch name and project name
+   const previewUrl = buildPreviewUrl(branchName, pagesProjectName);
 
   return {
     branchName,

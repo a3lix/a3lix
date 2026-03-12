@@ -8,16 +8,20 @@ binding = "AI"
 
 [[kv_namespaces]]
 binding = "A3LIX_KV"
-id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
-preview_id = "REPLACE_WITH_YOUR_KV_PREVIEW_ID"
+id = "00f93e247ff3499681aff66fcba5f705"
+preview_id = "00f93e247ff3499681aff66fcba5f705"
 
 [vars]
 ENVIRONMENT = "production"
 LOG_LEVEL = "info"
+
+[triggers]
+crons = ["*/1 * * * *"]
 
 # Secrets (set via `wrangler secret put`):
 # GITHUB_TOKEN          - Fine-grained GitHub PAT (repo contents + workflows)
 # TELEGRAM_BOT_TOKEN    - From @BotFather
 # TELEGRAM_SECRET_TOKEN - Random string to verify webhook requests
 # AI_API_KEY            - Only needed if using non-Workers-AI provider
-# (No Cloudflare Pages polling secrets required in the current deploy flow)
+# CF_ACCOUNT_ID         - REQUIRED; Cloudflare account id for Pages deployment status polling
+# CF_API_TOKEN          - REQUIRED; API token with Pages read access for deployment polling
