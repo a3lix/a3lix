@@ -10,8 +10,9 @@
     "ownerChatId": "YOUR_TELEGRAM_CHAT_ID"
   },
   "ai": {
-    "provider": "workers-ai",
-    "model": "@cf/meta/llama-3.3-70b-instruct-fp8"
+    "provider": "grok",
+    "model": "grok-2-latest",
+    "apiKey": "YOUR_XAI_API_KEY"
   },
   "paths": {
     "allowed": [
@@ -28,6 +29,7 @@
     "requireApprovalForAll": true
   },
   "cloudflare": {
-    "pagesProjectName": "schnitzel-fri3nds"
+    "pagesProjectName": "schnitzel-fri3nds",
+    "customDomain": "schnitzel-fri3nds.com"  // Optional: custom domain for your site
   }
 }

@@ -81,19 +81,19 @@ export function replyWelcomeEditor(displayName?: string): string {
 }
 
 export function replyParsing(): string {
-  return `🔍 Got it! Analysing your request...`;
+  return `💬 Thinking...`;
 }
 
 export function replyDeployChoice(summary: string): string {
   return (
     `✅ <b>Request analysed.</b>\n\n` +
     `${esc(summary)}\n\n` +
-    `Reply <b>LIVE</b> to push changes live right away, or <b>PREVIEW</b> to create a preview first.`
+    `Reply <b>YES</b> to apply these changes, or <b>NO</b> to cancel.`
   );
 }
 
 export function replyPreviewBuilding(): string {
-  return `🏗️ Change prepared. Triggering Cloudflare preview build now...`;
+  return `🔄 Site redeployment in process...`;
 }
 
 export function replyPreviewQueued(params: {
@@ -188,8 +188,8 @@ export function replyDiffPreview(params: {
 
 export function replyApprovalPending(): string {
   return (
-    `⏳ A change is waiting for your approval.\n\n` +
-    `Reply <b>YES</b> to approve and go live, or <b>NO</b> to reject.`
+    `⏳ Something is pending.\n\n` +
+    `Reply <b>YES</b> to proceed or <b>NO</b> to cancel.`
   );
 }
 
@@ -197,22 +197,22 @@ export function replyApprovalPending(): string {
 export function replyMerged(params: { summary: string; commitSha: string }): string {
   const { summary, commitSha } = params;
   return (
-    `✅ <b>Change approved and merged!</b>\n\n` +
+    `✅ <b>Changes applied successfully!</b>\n\n` +
     `${esc(summary)}\n\n` +
     `Commit: <code>${esc(commitSha.slice(0, 7))}</code>\n\n` +
-    `Your site will update in about a minute.`
+    `Your site will update in about 2–5 minutes.`
   );
 }
 
 export function replyCancelled(): string {
   return (
-    `❌ Change rejected.\n\n` +
-    `The preview branch has been deleted. No changes were made to your site.`
+    `❌ Change cancelled.\n\n` +
+    `No changes were made to your site.`
   );
 }
 
 export function replyNoPendingApproval(): string {
-  return `ℹ️ There are no pending approvals right now.`;
+  return `ℹ️ Nothing pending right now.`;
 }
 
 export function replyViewerCannotEdit(): string {
@@ -263,11 +263,10 @@ export function replyStatusCheck(params: {
   lastDeployedAt?: string;
   pagesProjectName: string;
 }): string {
-  const { pendingCount, lastDeployedAt, pagesProjectName } = params;
+  const { lastDeployedAt, pagesProjectName } = params;
   const lastDeploy = lastDeployedAt ? esc(lastDeployedAt) : 'never';
   return (
     `📊 <b>Status</b>\n\n` +
-    `• ${pendingCount} change(s) waiting for approval\n` +
     `• Last deployed: ${lastDeploy}\n` +
     `• Pages project: <code>${esc(pagesProjectName)}</code>`
   );
