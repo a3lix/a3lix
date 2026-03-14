@@ -1,6 +1,6 @@
 {
   "name": "a3lixcms",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "description": "The weird little agent that texts your clients back with deploy updates.",
   "bin": {
     "a3lixcms": "./setup/cli.js"
