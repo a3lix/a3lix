@@ -8,17 +8,9 @@
  * Coordinates the passive Cloudflare Pages preview-deploy strategy:
  *   1. Push a preview branch to GitHub via {@link createPreviewBranch}
  *   2. Cloudflare Pages auto-detects the new branch and builds a preview
- *   3. Return the predictable preview URL to the caller — no CF API token needed
  *
  * After the site owner reviews and approves the preview, {@link approveAndMerge}
  * merges the preview branch into main and cleans up the ref.
- *
- * Preview URL pattern:
- *   `https://{branch-slug}.{pages-project-name}.pages.dev`
- *
- * Where `branch-slug` is the branch name lowercased, with non-alphanumeric
- * characters (except `-`) replaced by `-`, consecutive hyphens collapsed,
- * leading/trailing hyphens stripped, and the result truncated to 63 characters.
  */
 
 import type { GitHubConfig, GitHubFileChange } from './github';
@@ -50,190 +42,31 @@ export interface DeployConfig {
  * The result of a successful preview deployment initiated by {@link deployPreview}.
  */
 export interface DeployResult {
-  /**
-   * The preview branch name pushed to GitHub.
-   * Example: `preview-felix-20260307-a3f1`
-   */
-  branchName: string;
+   /**
+    * The preview branch name pushed to GitHub.
+    * Example: `preview-felix-20260307-a3f1`
+    */
+   branchName: string;
 
-  /**
-   * The predictable Cloudflare Pages preview URL for this branch.
-   * Example: `https://preview-felix-20260307-a3f1.my-awesome-site.pages.dev`
-   */
-  previewUrl: string;
+   /**
+    * The SHA of the commit that was pushed to the preview branch.
+    * Can be used to verify the exact content deployed.
+    */
+   commitSha: string;
 
-  /**
-   * The SHA of the commit that was pushed to the preview branch.
-   * Can be used to verify the exact content deployed.
-   */
-  commitSha: string;
+   /**
+    * ISO 8601 UTC timestamp of when the branch was pushed.
+    * Example: `"2026-03-07T14:32:00.000Z"`
+    */
+   deployedAt: string;
 
-  /**
-   * ISO 8601 UTC timestamp of when the branch was pushed.
-   * Example: `"2026-03-07T14:32:00.000Z"`
-   */
-  deployedAt: string;
-
-  /**
-   * Estimated build duration in seconds, shown to the user while they wait.
-   * Derived from `DeployConfig.framework`: Astro = 45 s, Next.js = 60 s.
-   */
-  estimatedBuildSeconds: number;
-
-  /**
-   * Whether the preview URL was confirmed reachable before returning.
-   * `false` means the branch was pushed successfully but readiness polling timed out.
-   */
-  previewReady: boolean;
+   /**
+    * Estimated build duration in seconds, shown to the user while they wait.
+    * Derived from `DeployConfig.framework`: Astro = 45 s, Next.js = 60 s.
+    */
+   estimatedBuildSeconds: number;
 }
 
-export interface PreviewStatusResult {
-  state: 'pending' | 'ready' | 'failed';
-  previewUrl: string;
-  failureReason?: string;
-}
-
-interface PagesDeployment {
-  url?: string;
-  aliases?: string[];
-  environment?: string;
-  status?: string;
-  latest_stage?: { status?: string };
-  deployment_trigger?: { metadata?: { branch?: string } };
-}
-
-interface PagesDeploymentsResponse {
-  success?: boolean;
-  result?: PagesDeployment[];
-}
-
-function toAbsoluteUrl(urlLike: string): string {
-  return /^https?:\/\//i.test(urlLike) ? urlLike : `https://${urlLike}`;
-}
-
-interface PreviewResolutionResult {
-  url: string;
-  ready: boolean;
-}
-
-async function checkPreviewByUrl(params: {
-  previewUrl: string;
-}): Promise<PreviewStatusResult> {
-  const { previewUrl } = params;
-
-  try {
-    const probeUrl = `${previewUrl}?__a3lix_probe=${Date.now()}`;
-    const res = await fetch(probeUrl, { method: 'GET' });
-    if (res.status >= 200 && res.status < 400) {
-      return { state: 'ready', previewUrl };
-    }
-  } catch {
-    // ignore and treat as pending
-  }
-
-  return { state: 'pending', previewUrl };
-}
-
-async function checkPreviewByPagesApi(params: {
-  accountId: string;
-  apiToken: string;
-  pagesProjectName: string;
-  branchName: string;
-}): Promise<PreviewStatusResult> {
-  const {
-    accountId,
-    apiToken,
-    pagesProjectName,
-    branchName,
-  } = params;
-
-  const fallbackUrl = buildPreviewUrl(branchName, pagesProjectName);
-
-  try {
-    const endpoint =
-      `https://api.cloudflare.com/client/v4/accounts/${accountId}` +
-      `/pages/projects/${pagesProjectName}/deployments?env=preview`;
-
-    const res = await fetch(endpoint, {
-      headers: {
-        'Authorization': `Bearer ${apiToken}`,
-        'Content-Type': 'application/json',
-      },
-    });
-
-    if (!res.ok) {
-      return { state: 'pending', previewUrl: fallbackUrl };
-    }
-
-    const payload = (await res.json()) as PagesDeploymentsResponse;
-    const deployments = payload.result ?? [];
-
-    const match = deployments.find(
-      (d) =>
-        d.environment === 'preview' &&
-        d.deployment_trigger?.metadata?.branch === branchName,
-    );
-
-    if (!match) {
-      return { state: 'pending', previewUrl: fallbackUrl };
-    }
-
-    const stageStatus = (match.latest_stage?.status ?? match.status ?? '').toLowerCase();
-
-    if (stageStatus === 'success') {
-      const alias = match.aliases?.find((a) => a.includes('.pages.dev'));
-      if (typeof alias === 'string' && alias.length > 0) {
-        return { state: 'ready', previewUrl: toAbsoluteUrl(alias) };
-      }
-      if (typeof match.url === 'string' && match.url.length > 0) {
-        return { state: 'ready', previewUrl: toAbsoluteUrl(match.url) };
-      }
-      return { state: 'ready', previewUrl: fallbackUrl };
-    }
-
-    if (
-      stageStatus === 'failed' ||
-      stageStatus === 'failure' ||
-      stageStatus === 'error' ||
-      stageStatus === 'canceled' ||
-      stageStatus === 'cancelled'
-    ) {
-      return {
-        state: 'failed',
-        previewUrl: fallbackUrl,
-        failureReason: `Cloudflare Pages build failed (${stageStatus})`,
-      };
-    }
-
-    return { state: 'pending', previewUrl: fallbackUrl };
-  } catch (err) {
-    console.error('[a3lix] checkPreviewByPagesApi error:', err);
-    return { state: 'pending', previewUrl: fallbackUrl };
-  }
-}
-
-export async function checkPreviewStatus(params: {
-  pagesProjectName: string;
-  branchName: string;
-  env?: {
-    CF_ACCOUNT_ID?: string;
-    CF_API_TOKEN?: string;
-  };
-}): Promise<PreviewStatusResult> {
-  const { pagesProjectName, branchName, env } = params;
-  const fallbackUrl = buildPreviewUrl(branchName, pagesProjectName);
-
-  if (env?.CF_ACCOUNT_ID && env?.CF_API_TOKEN) {
-    return checkPreviewByPagesApi({
-      accountId: env.CF_ACCOUNT_ID,
-      apiToken: env.CF_API_TOKEN,
-      pagesProjectName,
-      branchName,
-    });
-  }
-
-  return checkPreviewByUrl({ previewUrl: fallbackUrl });
-}
 
 // ---------------------------------------------------------------------------
 // Exported utility
@@ -308,12 +141,8 @@ export async function deployPreview(params: {
   userId: string;
   changes: GitHubFileChange[];
   summary: string;
-  env?: {
-    CF_ACCOUNT_ID?: string;
-    CF_API_TOKEN?: string;
-  };
 }): Promise<DeployResult> {
-  const { githubConfig, deployConfig, userId, changes, summary, env } = params;
+  const { githubConfig, deployConfig, userId, changes, summary } = params;
 
   const commitMessage =
     `feat: A3lix preview — ${summary}\n\nRequested by user ${userId}\nGenerated by A3lix Bot`;
@@ -330,11 +159,9 @@ export async function deployPreview(params: {
 
   return {
     branchName: result.branchName,
-    previewUrl: result.previewUrl,
     commitSha: result.commitSha,
     deployedAt: new Date().toISOString(),
     estimatedBuildSeconds,
-    previewReady: false,
   };
 }
 

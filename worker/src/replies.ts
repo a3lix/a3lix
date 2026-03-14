@@ -103,24 +103,12 @@ export function replyPreviewQueued(params: {
   const { branchName, estimatedSeconds } = params;
   return (
     `⏳ <b>Preview is building</b>\n\n` +
-    `I'll send the preview link as soon as Cloudflare confirms the deploy is ready.\n` +
     `Expected build time: ~${estimatedSeconds}s\n\n` +
-    `🌿 Branch: <code>${esc(branchName)}</code>`
+    `🌿 Branch: <code>${esc(branchName)}</code>\n\n` +
+    `I'll notify you when it's ready for approval.`
   );
 }
 
-export function replyPreviewStillBuilding(params: {
-  branchName: string;
-  minutesWaiting: number;
-}): string {
-  const { branchName, minutesWaiting } = params;
-  return (
-    `⏳ <b>Still building preview</b>\n\n` +
-    `Cloudflare is still processing this branch.\n` +
-    `Waited: ~${minutesWaiting} minute(s)\n\n` +
-    `🌿 Branch: <code>${esc(branchName)}</code>`
-  );
-}
 
 export function replyPreviewFailed(params: {
   summary: string;
@@ -198,29 +186,13 @@ export function replyDiffPreview(params: {
   );
 }
 
-export function replyApprovalPending(previewUrl: string): string {
+export function replyApprovalPending(): string {
   return (
     `⏳ A change is waiting for your approval.\n\n` +
-    `<a href="${previewUrl}">View preview</a>\n\n` +
     `Reply <b>YES</b> to approve and go live, or <b>NO</b> to reject.`
   );
 }
 
-export function replyPreviewReady(params: {
-  summary: string;
-  previewUrl: string;
-  estimatedSeconds: number;
-  branchName: string;
-}): string {
-  const { summary, previewUrl, estimatedSeconds, branchName } = params;
-  return (
-    `🚀 <b>Preview Ready!</b>\n\n` +
-    `📝 ${esc(summary)}\n\n` +
-    `🔗 <a href="${previewUrl}">Open preview</a> — takes ~${estimatedSeconds}s to build\n\n` +
-    `🌿 Branch: <code>${esc(branchName)}</code>\n\n` +
-    `✅ Reply <b>YES</b> to go live\n❌ Reply <b>NO</b> to cancel`
-  );
-}
 
 export function replyMerged(params: { summary: string; commitSha: string }): string {
   const { summary, commitSha } = params;
